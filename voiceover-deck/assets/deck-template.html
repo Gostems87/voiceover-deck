@@ -1,0 +1,1205 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Deck Title Goes Here</title>
+<meta name="description" content="A narrated, self-playing web deck.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* ==================================================================
+     BRAND CONFIG — set your own colours/fonts here to reskin the deck.
+     The defaults below are a neutral slate + indigo placeholder palette
+     — nobody's brand, just a tasteful starting point. To make it yours,
+     change the hex values and the two font-family lines below — nothing
+     else in this stylesheet needs to change. See references/branding.md
+     for the full swap guide (colours, fonts, logo).
+     ================================================================== */
+  :root{
+    --navy:#1E293B;
+    --navy-deep:#0F172A;
+    --turquoise:#6366F1;
+    --turquoise-hover:#818CF8;
+    --blue:#0EA5E9;
+    --white:#ffffff;
+    --ink:#1E293B;
+    --muted:rgba(30,41,59,.62);
+    --muted-strong:rgba(30,41,59,.78);
+    --muted-inverse:rgba(255,255,255,.76);
+    --muted-inverse-soft:rgba(255,255,255,.66);
+    --bg-a:#F8F9FC;
+    --bg-b:#FFFFFF;
+    --bg-c:#F1F3FA;
+    --bg-tint:#ECEFF8;
+    --font-serif:'DM Serif Display', Georgia, serif;
+    --font-sans:'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --ease:cubic-bezier(.22,.61,.36,1);
+    --ease-soft:cubic-bezier(.16,1,.3,1);
+    /* spacing rhythm, used across the whole layout */
+    --space-2xs:6px;
+    --space-xs:10px;
+    --space-sm:16px;
+    --space-md:24px;
+    --space-lg:40px;
+    --space-xl:64px;
+    --rule-w:22px;
+    --focus-ring:0 0 0 3px rgba(99,102,241,.45);
+  }
+  /* ================================================================== */
+
+  *{box-sizing:border-box;}
+  html,body{height:100%;margin:0;padding:0;}
+  body{
+    font-family:var(--font-sans);
+    color:var(--ink);
+    background:var(--navy-deep);
+    overflow:hidden;
+    -webkit-font-smoothing:antialiased;
+    text-rendering:optimizeLegibility;
+  }
+
+  .deck{
+    position:relative;
+    width:100vw;
+    height:100vh;
+    height:100dvh;
+    overflow:hidden;
+  }
+  .deck:fullscreen{ background:var(--navy-deep); }
+
+  /* ---------- top progress ---------- */
+  .top-progress{
+    position:fixed;
+    top:0; left:0; right:0;
+    height:3px;
+    background:rgba(255,255,255,.08);
+    z-index:60;
+  }
+  .top-progress__fill{
+    height:100%;
+    width:0%;
+    background:linear-gradient(90deg, var(--turquoise), var(--blue));
+    transition:width .08s linear;
+  }
+
+  /* ---------- onboarding hint ---------- */
+  .hint{
+    position:fixed;
+    top:22px; left:50%;
+    transform:translateX(-50%);
+    background:rgba(18,22,45,.78);
+    backdrop-filter:blur(14px);
+    -webkit-backdrop-filter:blur(14px);
+    color:var(--muted-inverse);
+    font-size:.78rem;
+    letter-spacing:.02em;
+    padding:9px 18px;
+    border-radius:999px;
+    border:1px solid rgba(255,255,255,.08);
+    z-index:55;
+    opacity:1;
+    transition:opacity .6s var(--ease), transform .6s var(--ease);
+    white-space:nowrap;
+  }
+  .hint.is-hidden{ opacity:0; transform:translate(-50%,-8px); pointer-events:none; }
+
+  /* ---------- slides ---------- */
+  .slide{
+    position:absolute;
+    inset:0;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:clamp(6vh, 8vh, 11vh) clamp(6vw, 8vw, 13vw);
+    opacity:0;
+    transform:translateY(14px) scale(.985);
+    pointer-events:none;
+    transition:opacity .9s var(--ease-soft), transform .9s var(--ease-soft);
+    overflow:hidden;
+  }
+  .slide.is-active{
+    opacity:1;
+    transform:none;
+    pointer-events:auto;
+    z-index:2;
+  }
+
+  .slide[data-theme="dark"]{ background:var(--navy); color:var(--white); }
+  .slide[data-bg="a"]{ background:var(--bg-a); }
+  .slide[data-bg="b"]{ background:var(--bg-b); }
+  .slide[data-bg="c"]{ background:var(--bg-c); }
+  .slide[data-bg="tint"]{ background:var(--bg-tint); }
+
+  /* subtle dot texture + glow on dark slides */
+  .slide[data-theme="dark"]::before{
+    content:"";
+    position:absolute; inset:0;
+    background-image:radial-gradient(circle at 1px 1px, rgba(255,255,255,.05) 1px, transparent 0);
+    background-size:34px 34px;
+    -webkit-mask-image:radial-gradient(ellipse 70% 60% at 62% 38%, #000 0%, transparent 78%);
+    mask-image:radial-gradient(ellipse 70% 60% at 62% 38%, #000 0%, transparent 78%);
+    pointer-events:none;
+  }
+  .slide[data-theme="dark"]::after{
+    content:"";
+    position:absolute;
+    width:56vw; height:56vw;
+    right:-16vw; bottom:-24vw;
+    background:radial-gradient(circle, rgba(99,102,241,.16), transparent 64%);
+    filter:blur(20px);
+    pointer-events:none;
+  }
+
+  .slide__inner{
+    position:relative;
+    z-index:1;
+    max-width:960px;
+    width:100%;
+    display:flex;
+    flex-direction:column;
+    align-items:flex-start;
+    gap:var(--space-sm);
+  }
+  .slide__inner > *{ opacity:0; overflow-wrap:break-word; }
+  .slide__inner.reveal > *{ animation:revealUp .9s var(--ease-soft) forwards; }
+  .slide__inner.reveal > *:nth-child(1){ animation-delay:.06s; }
+  .slide__inner.reveal > *:nth-child(2){ animation-delay:.18s; }
+  .slide__inner.reveal > *:nth-child(3){ animation-delay:.32s; }
+  .slide__inner.reveal > *:nth-child(4){ animation-delay:.46s; }
+  .slide__inner.reveal > *:nth-child(5){ animation-delay:.58s; }
+  @keyframes revealUp{ from{opacity:0; transform:translateY(16px);} to{opacity:1; transform:translateY(0);} }
+
+  .eyebrow{
+    display:inline-flex;
+    align-items:center;
+    gap:var(--space-xs);
+    font-size:.78rem;
+    font-weight:700;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:var(--muted-strong);
+  }
+  .slide[data-theme="dark"] .eyebrow{ color:var(--muted-inverse); }
+  .eyebrow::before{
+    content:"";
+    width:7px; height:7px;
+    border-radius:2px;
+    background:var(--navy);
+    flex:none;
+  }
+  .slide[data-theme="dark"] .eyebrow::before{ background:var(--turquoise); }
+  .slide[data-accent="blue"] .eyebrow::before{ background:var(--blue); }
+  .eyebrow + .headline{ margin-top:-6px; }
+
+  h1,h2{ margin:0; font-family:var(--font-serif); font-weight:400; color:var(--ink); letter-spacing:-.012em; }
+  .slide[data-theme="dark"] h1, .slide[data-theme="dark"] h2{ color:var(--white); }
+
+  .headline{
+    font-size:clamp(2.1rem, 4.6vw, 3.6rem);
+    line-height:1.1;
+    max-width:14ch;
+    text-wrap:balance;
+  }
+  .headline--hero{
+    font-size:clamp(2.8rem, 7vw, 5.4rem);
+    line-height:1.04;
+    max-width:none;
+    letter-spacing:-.018em;
+  }
+  .headline--tight{ max-width:20ch; }
+
+  .lede{
+    font-size:clamp(1.05rem, 1.6vw, 1.3rem);
+    line-height:1.5;
+    color:var(--muted);
+    max-width:48ch;
+    font-weight:400;
+  }
+  .slide[data-theme="dark"] .lede{ color:var(--muted-inverse); }
+
+  .support-line{
+    font-size:clamp(.98rem, 1.3vw, 1.08rem);
+    line-height:1.62;
+    color:var(--muted);
+    max-width:46ch;
+  }
+  .slide[data-theme="dark"] .support-line{ color:var(--muted-inverse); }
+
+  /* ---------- ghost numeral ---------- */
+  .ghost-num{
+    position:absolute;
+    top:-4vh; right:-1vw;
+    font-family:var(--font-serif);
+    font-size:clamp(11rem, 24vw, 22rem);
+    color:var(--navy);
+    opacity:.06;
+    line-height:1;
+    z-index:0;
+    pointer-events:none;
+    user-select:none;
+    font-variant-numeric:lining-nums;
+  }
+
+  /* ---------- the accent rule ----------
+     A short brand-colour hairline that hinges the promise (headline +
+     support copy) to the evidence (the proof chip) on any slide that
+     carries a ghost numeral. One recurring signature, used sparingly. */
+  .ghost-num ~ .slide__inner .support-line::after{
+    content:"";
+    display:block;
+    width:var(--rule-w);
+    height:1.5px;
+    margin-top:var(--space-md);
+    background:var(--turquoise);
+  }
+  .slide[data-accent="blue"] .support-line::after{ background:var(--blue); }
+
+  /* ---------- proof chip ---------- */
+  .proof-chip{
+    display:inline-flex;
+    align-items:center;
+    gap:12px;
+    padding:13px 22px;
+    border-radius:12px;
+    background:rgba(99,102,241,.08);
+    border:1px solid rgba(99,102,241,.32);
+    color:var(--navy);
+    font-size:.94rem;
+    font-weight:600;
+    letter-spacing:-.005em;
+    align-self:flex-start;
+    max-width:100%;
+  }
+  .slide[data-accent="blue"] .proof-chip{
+    background:rgba(14,165,233,.08);
+    border-color:rgba(14,165,233,.34);
+  }
+  .proof-chip__dot{
+    width:7px; height:7px;
+    border-radius:50%;
+    background:var(--turquoise);
+    box-shadow:0 0 0 3px rgba(99,102,241,.16);
+    flex:none;
+  }
+  .slide[data-accent="blue"] .proof-chip__dot{
+    background:var(--blue);
+    box-shadow:0 0 0 3px rgba(14,165,233,.16);
+  }
+
+  /* ---------- tag pills ---------- */
+  .tag-row{ display:flex; gap:10px; flex-wrap:wrap; width:100%; }
+  .tag{
+    padding:9px 17px;
+    border-radius:10px;
+    border:1px solid rgba(30,41,59,.16);
+    background:rgba(30,41,59,.03);
+    font-size:.84rem;
+    font-weight:500;
+    letter-spacing:-.005em;
+    color:var(--muted-strong);
+  }
+
+  /* ---------- title / close slide ---------- */
+  .slide--bookend .slide__inner{ gap:var(--space-lg); }
+  .slide--bookend .lede{ margin-top:-8px; }
+  .brand-logo{
+    height:auto;
+    width:clamp(158px, 16vw, 236px);
+    filter:brightness(0) invert(1);
+    display:block;
+  }
+  .brand-logo--text{
+    font-family:var(--font-serif);
+    font-size:clamp(1.6rem, 3vw, 2.4rem);
+    color:var(--white);
+    letter-spacing:-.01em;
+  }
+  .kicker-tag{
+    font-size:.78rem;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    font-weight:600;
+    color:var(--turquoise);
+  }
+
+  .cta-btn{
+    appearance:none;
+    border:none;
+    cursor:pointer;
+    display:inline-flex;
+    align-items:center;
+    gap:var(--space-xs);
+    background:var(--turquoise);
+    color:var(--navy-deep);
+    font-family:var(--font-sans);
+    font-weight:700;
+    font-size:1rem;
+    letter-spacing:-.005em;
+    padding:17px 30px;
+    margin-top:var(--space-2xs);
+    border-radius:999px;
+    transition:transform .25s var(--ease-soft), background .2s var(--ease), box-shadow .3s var(--ease-soft);
+    box-shadow:0 14px 30px -6px rgba(99,102,241,.32);
+  }
+  .cta-btn:hover{ background:var(--turquoise-hover); transform:translateY(-2px); box-shadow:0 20px 38px -8px rgba(99,102,241,.4); }
+  .cta-btn:active{ transform:translateY(0); box-shadow:0 8px 18px -6px rgba(99,102,241,.34); }
+  .cta-btn:focus-visible{ outline:none; box-shadow:0 14px 30px -6px rgba(99,102,241,.32), var(--focus-ring); }
+  .cta-btn svg{ transition:transform .25s var(--ease-soft); }
+  .cta-btn:hover svg{ transform:translateX(3px); }
+
+  /* ---------- stats slide ---------- */
+  .stats{
+    display:flex;
+    align-items:center;
+    gap:0;
+    margin-top:var(--space-xl);
+    width:100%;
+  }
+  .stat{ flex:1; padding:0 var(--space-lg); text-align:left; }
+  .stat:first-child{ padding-left:0; }
+  .stat:last-child{ padding-right:0; }
+  .stat__num{
+    font-family:var(--font-serif);
+    font-size:clamp(2.8rem, 6.4vw, 5rem);
+    color:var(--turquoise);
+    line-height:1;
+    letter-spacing:-.02em;
+    font-variant-numeric:lining-nums tabular-nums;
+  }
+  .stat__label{
+    margin-top:var(--space-sm);
+    font-size:.82rem;
+    letter-spacing:.1em;
+    text-transform:uppercase;
+    color:var(--muted-inverse-soft);
+    font-weight:700;
+  }
+  .stat__label::before{
+    content:"";
+    display:block;
+    width:var(--rule-w);
+    height:1.5px;
+    margin-bottom:12px;
+    background:var(--turquoise);
+  }
+  .stat__divider{
+    width:1px; height:58%; align-self:center;
+    background:linear-gradient(180deg, transparent, rgba(255,255,255,.22) 50%, transparent);
+  }
+
+  /* ---------- convergence ("why it holds together") ---------- */
+  .convergence{ margin-top:var(--space-lg); width:100%; }
+  .convergence__row{
+    position:relative;
+    display:flex;
+    flex-wrap:wrap;
+    gap:12px;
+    padding-bottom:var(--space-md);
+  }
+  .convergence__row::after{
+    content:"";
+    position:absolute; left:0; right:0; bottom:0;
+    height:1.5px;
+    background:linear-gradient(90deg, rgba(30,41,59,.22), rgba(30,41,59,.22) 55%, transparent);
+  }
+  .convergence__chip{
+    padding:10px 18px;
+    border-radius:10px;
+    background:var(--white);
+    border:1px solid rgba(30,41,59,.13);
+    font-size:.86rem;
+    font-weight:600;
+    letter-spacing:-.005em;
+    color:var(--muted-strong);
+  }
+  .convergence__label{
+    margin-top:var(--space-md);
+    font-size:.82rem;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    font-weight:700;
+    color:var(--navy);
+    display:flex;
+    align-items:center;
+    gap:var(--space-xs);
+  }
+  .convergence__label::before{
+    content:"";
+    width:var(--rule-w); height:1.5px;
+    background:var(--turquoise);
+  }
+
+  /* ---------- caption / script overlay ---------- */
+  .caption{
+    position:fixed;
+    left:50%; bottom:104px;
+    transform:translate(-50%,10px);
+    max-width:min(760px, 84vw);
+    background:rgba(15,19,40,.86);
+    backdrop-filter:blur(16px);
+    -webkit-backdrop-filter:blur(16px);
+    color:var(--white);
+    padding:16px 24px;
+    border-radius:16px;
+    border:1px solid rgba(255,255,255,.08);
+    font-size:.98rem;
+    line-height:1.55;
+    text-align:center;
+    opacity:0;
+    pointer-events:none;
+    transition:opacity .45s var(--ease-soft), transform .45s var(--ease-soft);
+    z-index:45;
+  }
+  .caption.is-visible{ opacity:1; transform:translate(-50%,0); }
+
+  /* ---------- controls ---------- */
+  .controls{
+    position:fixed;
+    left:50%; bottom:26px;
+    transform:translateX(-50%);
+    display:flex;
+    align-items:center;
+    gap:2px;
+    padding:8px 10px;
+    border-radius:999px;
+    background:rgba(16,20,42,.76);
+    backdrop-filter:blur(20px) saturate(150%);
+    -webkit-backdrop-filter:blur(20px) saturate(150%);
+    box-shadow:0 16px 44px rgba(8,11,26,.36), inset 0 1px 0 rgba(255,255,255,.06);
+    border:1px solid rgba(255,255,255,.07);
+    transition:background .3s var(--ease-soft), box-shadow .3s var(--ease-soft), border-color .3s var(--ease-soft);
+    z-index:50;
+  }
+  .controls:hover, .controls:focus-within{
+    background:rgba(16,20,42,.92);
+    border-color:rgba(255,255,255,.12);
+    box-shadow:0 20px 50px rgba(8,11,26,.46), inset 0 1px 0 rgba(255,255,255,.08);
+  }
+  .ctrl-btn{
+    appearance:none;
+    border:none;
+    background:transparent;
+    color:rgba(255,255,255,.72);
+    width:38px; height:38px;
+    border-radius:50%;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    cursor:pointer;
+    transition:background .2s var(--ease), color .2s var(--ease), transform .15s var(--ease-soft);
+  }
+  .ctrl-btn:hover{ background:rgba(255,255,255,.1); color:var(--white); }
+  .ctrl-btn:active{ transform:scale(.9); }
+  .ctrl-btn:focus-visible{ outline:none; box-shadow:var(--focus-ring); }
+  .ctrl-btn.is-active{ color:var(--turquoise); background:rgba(99,102,241,.14); }
+
+  .ctrl-btn--play{
+    width:46px; height:46px;
+    background:var(--turquoise);
+    color:var(--navy-deep);
+    margin:0 4px;
+    box-shadow:0 8px 18px -6px rgba(99,102,241,.5);
+  }
+  .ctrl-btn--play:hover{ background:var(--turquoise-hover); color:var(--navy-deep); transform:translateY(-1px); box-shadow:0 12px 22px -6px rgba(99,102,241,.6); }
+  .ctrl-btn--play:active{ transform:translateY(0) scale(.94); }
+  .ctrl-btn--play:focus-visible{ box-shadow:0 8px 18px -6px rgba(99,102,241,.5), var(--focus-ring); }
+  .ctrl-btn--play .icon-pause{ display:none; }
+  .ctrl-btn--play.is-playing .icon-play{ display:none; }
+  .ctrl-btn--play.is-playing .icon-pause{ display:inline-flex; }
+
+  .icon-voice-off{ display:none; }
+  .ctrl-btn--voice.is-off .icon-voice-on{ display:none; }
+  .ctrl-btn--voice.is-off .icon-voice-off{ display:inline-flex; }
+
+  .voice-mode-dot{
+    position:absolute;
+    width:7px; height:7px;
+    border-radius:50%;
+    right:2px; bottom:2px;
+    background:rgba(255,255,255,.28);
+    border:1.5px solid rgba(16,20,42,1);
+  }
+  .voice-mode-dot[data-mode="cloned"]{ background:var(--turquoise); }
+  .voice-mode-dot[data-mode="preview"]{ background:var(--blue); }
+  .ctrl-btn--voice{ position:relative; }
+
+  .controls__count{
+    font-variant-numeric:tabular-nums;
+    font-size:.86rem;
+    font-weight:600;
+    letter-spacing:.01em;
+    color:rgba(255,255,255,.7);
+    padding:0 12px;
+    min-width:56px;
+    text-align:center;
+  }
+  .controls__divider{
+    width:1px; height:22px;
+    background:rgba(255,255,255,.12);
+    margin:0 4px;
+  }
+
+  /* ---------- responsive ---------- */
+  @media (max-width:720px){
+    .slide{ padding:9vh 7vw; }
+    .slide__inner{ gap:var(--space-md); }
+    .slide--bookend .slide__inner{ gap:var(--space-md); }
+    .headline--hero{ font-size:clamp(2.15rem, 10vw, 5.4rem); }
+    .stats{ flex-direction:column; align-items:flex-start; gap:26px; margin-top:var(--space-lg); }
+    .stat{ padding:0; }
+    .stat:last-child{ padding:0; }
+    .stat__divider{ display:none; }
+    .hint{ font-size:.7rem; padding:8px 14px; max-width:88vw; white-space:normal; text-align:center; }
+    .brand-logo{ width:132px; }
+    .ghost-num{ font-size:9rem; top:-2vh; }
+    .caption{ bottom:98px; padding:13px 18px; font-size:.88rem; }
+    .controls{ gap:0; padding:6px 8px; }
+    .ctrl-btn{ width:38px; height:38px; }
+    .ctrl-btn--play{ width:46px; height:46px; }
+  }
+
+  @media (max-width:400px){
+    .controls{ padding:5px 6px; }
+    .ctrl-btn{ width:36px; height:36px; }
+    .ctrl-btn--play{ width:44px; height:44px; margin:0 2px; }
+    .controls__count{ min-width:44px; padding:0 6px; }
+    .controls__divider{ margin:0 2px; }
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    *{ animation-duration:.01ms !important; transition-duration:.01ms !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="deck" id="deck">
+
+  <div class="top-progress"><div class="top-progress__fill" id="topProgressFill"></div></div>
+
+  <div class="hint" id="hint">Space to play &nbsp;&middot;&nbsp; &larr; &rarr; to move &nbsp;&middot;&nbsp; V voiceover &nbsp;&middot;&nbsp; S script &nbsp;&middot;&nbsp; F fullscreen</div>
+
+  <!-- Slides are built at load time from the DECK config below and
+       injected here. Do not hand-write <section> markup — edit DECK
+       instead so the player engine (and its DOM assumptions) stays intact. -->
+  <div id="slidesRoot"></div>
+
+  <div class="caption" id="caption" aria-live="polite"><p id="captionText"></p></div>
+
+  <div class="controls" role="toolbar" aria-label="Deck controls">
+    <button class="ctrl-btn" id="prevBtn" aria-label="Previous slide" title="Previous (&larr;)">
+      <svg viewBox="0 0 24 24" width="18" height="18"><path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <button class="ctrl-btn ctrl-btn--play" id="playBtn" aria-label="Play" title="Play / pause (Space)">
+      <svg class="icon-play" viewBox="0 0 24 24" width="16" height="16"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>
+      <svg class="icon-pause" viewBox="0 0 24 24" width="16" height="16"><rect x="6" y="5" width="4" height="14" fill="currentColor"/><rect x="14" y="5" width="4" height="14" fill="currentColor"/></svg>
+    </button>
+    <button class="ctrl-btn" id="nextBtn" aria-label="Next slide" title="Next (&rarr;)">
+      <svg viewBox="0 0 24 24" width="18" height="18"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+
+    <div class="controls__count" id="countLabel">1 / 1</div>
+    <div class="controls__divider"></div>
+
+    <button class="ctrl-btn ctrl-btn--voice is-active" id="voiceBtn" aria-pressed="true" title="Voiceover on/off (V)">
+      <svg class="icon-voice-on" viewBox="0 0 24 24" width="18" height="18"><path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor"/><path d="M16.5 8.5a5 5 0 010 7" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/><path d="M19.3 6a9 9 0 010 12" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" opacity=".55"/></svg>
+      <svg class="icon-voice-off" viewBox="0 0 24 24" width="18" height="18"><path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor"/><path d="M16 9l4.5 4.5M20.5 9L16 13.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <span class="voice-mode-dot" id="voiceModeDot" data-mode="idle"></span>
+    </button>
+    <button class="ctrl-btn" id="scriptBtn" aria-pressed="false" title="Show script (S)">
+      <svg viewBox="0 0 24 24" width="18" height="18"><rect x="3" y="6" width="18" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M7 12h3M7 15h6M13 12h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+    </button>
+    <button class="ctrl-btn" id="fsBtn" title="Fullscreen (F)">
+      <svg viewBox="0 0 24 24" width="18" height="18"><path d="M9 4H4v5M15 4h5v5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ==================================================================
+  // DECK CONTENT — edit this block to build a new deck. Everything
+  // below (the player engine) reads from DECK and should not need to
+  // change for a normal build.
+  //
+  // Two rules that matter:
+  // 1. `headline`/`lede`/`support` etc. are the ON-SCREEN text.
+  //    `narration` is the SPOKEN text — write it spoken-aloud style
+  //    (spell out numbers: "thirty-six" not "36"; write out symbols:
+  //    "plus eighty-six" not "+86"). The two can differ. See
+  //    references/voice-cloning.md for the phonetic-respelling trick
+  //    if a voice tool mispronounces a brand word.
+  // 2. Slide count drives the audio manifest automatically
+  //    (audio/slide-01.mp3, slide-02.mp3, ...). Add or remove a slide
+  //    and the numbering shifts on its own — no need to touch AUDIO.
+  // ==================================================================
+  var DECK = {
+
+    // Optional real wordmark for the title/close slides — used as-is,
+    // shown white via CSS filter. Empty by default, so logoText below
+    // renders as a serif text wordmark instead. To use an image, base64
+    // -encode your logo (PNG or SVG) and paste it into logoDataUri as
+    // 'data:image/png;base64,...' — see references/branding.md.
+    logo: {
+      logoDataUri: '',
+      logoText: 'Your Brand',
+      alt: 'Your Brand'
+    },
+
+    slides: [
+
+      // ---- 1. TITLE (bookend) --------------------------------------
+      {
+        type: 'title',
+        headline: 'Your Company<br>Narrated Deck',
+        lede: 'An example deck showing what this template can do — replace this with your own line.',
+        narration: 'Welcome. This is an example of a narrated, self-playing deck. Swap in your own words, your own brand, and your own voice.'
+      },
+
+      // ---- 2. INTRO (content, tag row) -------------------------------
+      {
+        type: 'content',
+        bg: 'a',
+        eyebrow: 'About this deck',
+        headline: 'Use this slide to set context before your key points.',
+        support: 'Short supporting line — one or two sentences that frame what follows.',
+        tags: ['Example', 'Edit me', 'Swap this text'],
+        narration: 'Use this slide to set up who this deck is for and why it matters, in one or two spoken sentences.'
+      },
+
+      // ---- 3. FIRST POINT (content, proof chip, ghost numeral) ------
+      // This is one of the "2-3 placeholder" slides — the repeatable
+      // pattern you copy/rename for each key point in a real deck.
+      {
+        type: 'content',
+        bg: 'b',
+        ghostNum: '01',
+        eyebrow: '01 · Service One',
+        headline: 'Say what Service One does, in one clear sentence.',
+        support: 'Replace with your first key message — what it is and why it matters.',
+        proof: 'Trusted by teams across the industry.',
+        narration: 'Say what Service One does, using natural spoken sentences rather than reading the headline aloud.'
+      },
+
+      // ---- 4. SECOND POINT (content, proof chip, blue accent) -------
+      {
+        type: 'content',
+        bg: 'a',
+        accent: 'blue',
+        ghostNum: '02',
+        eyebrow: '02 · Service Two',
+        headline: 'Say what Service Two does, in one clear sentence.',
+        support: 'Replace with your second key message — what it is and why it matters.',
+        proof: 'Built to fit straight into an existing workflow.',
+        narration: 'Say what Service Two does, again written as natural spoken sentences rather than the on-screen headline.'
+      },
+
+      // ---- 5. STATS / PROOF ------------------------------------------
+      {
+        type: 'stats',
+        eyebrow: 'The numbers',
+        headline: 'The numbers that back it up.',
+        stats: [
+          { num: '98%', label: 'Customer satisfaction' },
+          { num: '24-7', label: 'Support availability' },
+          { num: '10 years', label: 'In business' }
+        ],
+        narration: 'Ninety-eight percent customer satisfaction, support available twenty-four seven, and ten years in business. Spell every number out in full like this so the voice tool reads it correctly.'
+      },
+
+      // ---- 6. CONVERGENCE ("why it holds together") -------------------
+      {
+        type: 'convergence',
+        eyebrow: 'Why it holds together',
+        headline: 'One clear takeaway, stated simply.',
+        chips: ['Clear message', 'Real proof', 'Easy next step'],
+        label: 'One clear takeaway',
+        narration: 'Tie the points together into a single memorable line the audience will actually remember.'
+      },
+
+      // ---- 7. CLOSE / CTA (bookend) -----------------------------------
+      {
+        type: 'close',
+        headline: "Let's talk.",
+        lede: 'Replace this with your own call-to-action line.',
+        ctaLabel: 'Book a conversation',
+        // ctaHref: 'https://example.com/contact',  // uncomment for a real link;
+        // left out here so the button shows a harmless demo message instead.
+        narration: "Restate the offer and the call to action, in one clear closing line."
+      }
+
+    ]
+  };
+
+  // ── AUDIO MANIFEST ────────────────────────────────────────────────
+  // Derived automatically from DECK.slides.length as audio/slide-01.mp3,
+  // slide-02.mp3, etc. Drop matching MP3s into an /audio folder next to
+  // this file and the deck plays them automatically — no code change.
+  // Any slide without a matching file falls back to the browser's
+  // built-in voice (speechSynthesis) so the deck always plays.
+  function pad2(n){ return (n < 10 ? '0' : '') + n; }
+  var AUDIO = {};
+  DECK.slides.forEach(function(_, i){ AUDIO[i + 1] = 'audio/slide-' + pad2(i + 1) + '.mp3'; });
+
+  var DWELL_MS = 7000;       // per-slide pause length when voiceover is off
+  var CHARS_PER_SEC = 14;    // rough speaking pace used to size the TTS progress bar
+
+  // ── SLIDE RENDERING ──────────────────────────────────────────────
+  // Builds the same DOM shape the original hand-written deck used, so
+  // the player engine below (querySelectorAll('.slide'), etc.) needs
+  // no changes when you edit DECK.
+  function el(tag, opts){
+    var e = document.createElement(tag);
+    opts = opts || {};
+    if (opts.class) e.className = opts.class;
+    if (opts.html !== undefined) e.innerHTML = opts.html;
+    if (opts.text !== undefined) e.textContent = opts.text;
+    if (opts.attrs){ for (var k in opts.attrs) e.setAttribute(k, opts.attrs[k]); }
+    return e;
+  }
+
+  function renderLogo(){
+    if (DECK.logo && DECK.logo.logoDataUri){
+      return el('img', { class:'brand-logo', attrs:{ src: DECK.logo.logoDataUri, alt: DECK.logo.alt || 'Brand' } });
+    }
+    return el('div', { class:'brand-logo brand-logo--text', text: (DECK.logo && DECK.logo.logoText) || 'Brand' });
+  }
+
+  function narrationEl(text){
+    return el('p', { class:'narration', text: text || '', attrs:{ hidden:'' } });
+  }
+
+  function renderTitle(s, id, active){
+    var section = el('section', { class:'slide slide--bookend' + (active ? ' is-active' : ''), attrs:{ 'data-theme':'dark', id:id } });
+    var inner = el('div', { class:'slide__inner' });
+    inner.appendChild(renderLogo());
+    inner.appendChild(el('h1', { class:'headline headline--hero', html:s.headline || '' }));
+    if (s.lede) inner.appendChild(el('p', { class:'lede', text:s.lede }));
+    section.appendChild(inner);
+    section.appendChild(narrationEl(s.narration));
+    return section;
+  }
+
+  function renderContent(s, id){
+    var section = el('section', { class:'slide', attrs:{ 'data-theme':'light', id:id, 'data-bg': s.bg || 'a' } });
+    if (s.accent) section.setAttribute('data-accent', s.accent);
+    if (s.ghostNum) section.appendChild(el('div', { class:'ghost-num', text:s.ghostNum }));
+    var inner = el('div', { class:'slide__inner' });
+    if (s.eyebrow) inner.appendChild(el('div', { class:'eyebrow', text:s.eyebrow }));
+    inner.appendChild(el('h2', { class:'headline' + (s.tight ? ' headline--tight' : ''), html:s.headline || '' }));
+    if (s.support) inner.appendChild(el('p', { class:'support-line', text:s.support }));
+    if (s.proof){
+      var chip = el('div', { class:'proof-chip' });
+      chip.appendChild(el('span', { class:'proof-chip__dot' }));
+      chip.appendChild(document.createTextNode(s.proof));
+      inner.appendChild(chip);
+    }
+    if (s.tags && s.tags.length){
+      var row = el('div', { class:'tag-row' });
+      s.tags.forEach(function(t){ row.appendChild(el('span', { class:'tag', text:t })); });
+      inner.appendChild(row);
+    }
+    section.appendChild(inner);
+    section.appendChild(narrationEl(s.narration));
+    return section;
+  }
+
+  function renderStats(s, id){
+    var section = el('section', { class:'slide', attrs:{ 'data-theme':'dark', id:id } });
+    var inner = el('div', { class:'slide__inner' });
+    if (s.eyebrow) inner.appendChild(el('div', { class:'eyebrow', text:s.eyebrow }));
+    inner.appendChild(el('h2', { class:'headline headline--tight', html:s.headline || '' }));
+    var stats = el('div', { class:'stats' });
+    (s.stats || []).forEach(function(st, i){
+      var stat = el('div', { class:'stat' });
+      stat.appendChild(el('div', { class:'stat__num', text:st.num }));
+      stat.appendChild(el('div', { class:'stat__label', text:st.label }));
+      stats.appendChild(stat);
+      if (i < s.stats.length - 1) stats.appendChild(el('div', { class:'stat__divider' }));
+    });
+    inner.appendChild(stats);
+    section.appendChild(inner);
+    section.appendChild(narrationEl(s.narration));
+    return section;
+  }
+
+  function renderConvergence(s, id){
+    var section = el('section', { class:'slide', attrs:{ 'data-theme':'light', id:id, 'data-bg':'tint' } });
+    var inner = el('div', { class:'slide__inner' });
+    if (s.eyebrow) inner.appendChild(el('div', { class:'eyebrow', text:s.eyebrow }));
+    inner.appendChild(el('h2', { class:'headline', html:s.headline || '' }));
+    var conv = el('div', { class:'convergence' });
+    var row = el('div', { class:'convergence__row' });
+    (s.chips || []).forEach(function(c){ row.appendChild(el('span', { class:'convergence__chip', text:c })); });
+    conv.appendChild(row);
+    conv.appendChild(el('div', { class:'convergence__label', text:s.label || '' }));
+    inner.appendChild(conv);
+    section.appendChild(inner);
+    section.appendChild(narrationEl(s.narration));
+    return section;
+  }
+
+  function renderClose(s, id){
+    var section = el('section', { class:'slide slide--bookend', attrs:{ 'data-theme':'dark', id:id } });
+    var inner = el('div', { class:'slide__inner' });
+    inner.appendChild(renderLogo());
+    inner.appendChild(el('h1', { class:'headline headline--hero', attrs:{ style:'font-size:clamp(2.4rem, 5.4vw, 4rem);' }, html:s.headline || '' }));
+    if (s.lede) inner.appendChild(el('p', { class:'lede', text:s.lede }));
+    if (s.ctaLabel){
+      var btn = el('button', { class:'cta-btn', attrs:{ type:'button' } });
+      if (s.ctaHref) btn.setAttribute('data-href', s.ctaHref);
+      btn.appendChild(document.createTextNode(s.ctaLabel));
+      btn.insertAdjacentHTML('beforeend', '<svg viewBox="0 0 24 24" width="16" height="16"><path d="M5 12h13M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>');
+      inner.appendChild(btn);
+    }
+    section.appendChild(inner);
+    section.appendChild(narrationEl(s.narration));
+    return section;
+  }
+
+  var RENDERERS = {
+    title: renderTitle,
+    content: renderContent,
+    stats: renderStats,
+    convergence: renderConvergence,
+    close: renderClose
+  };
+
+  (function buildSlides(){
+    var root = document.getElementById('slidesRoot');
+    DECK.slides.forEach(function(s, i){
+      var id = 'slide-' + (i + 1);
+      var renderer = RENDERERS[s.type];
+      if (!renderer){ throw new Error('Unknown slide type: ' + s.type); }
+      var section = renderer(s, id, i === 0);
+      root.appendChild(section);
+    });
+  })();
+
+  // wire CTA buttons after render — real link if ctaHref is set,
+  // otherwise a harmless "demo deck" message, so the button always
+  // does something sensible until a real destination is chosen.
+  document.querySelectorAll('.cta-btn').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var href = btn.getAttribute('data-href');
+      if (href){ window.open(href, '_blank', 'noopener'); return; }
+      var original = btn.innerHTML;
+      btn.textContent = '';
+      var span = document.createElement('span');
+      span.textContent = 'This is a demo deck. Wire this up when you are ready.';
+      btn.appendChild(span);
+      setTimeout(function(){ btn.innerHTML = original; }, 2200);
+    });
+  });
+
+  // ==================================================================
+  // PLAYER ENGINE — this is the proven, tested part. It should not
+  // need to change for a normal build; it just reads whatever slides
+  // buildSlides() produced above.
+  // ==================================================================
+
+  var deck = document.getElementById('deck');
+  var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+  var total = slides.length;
+
+  var topFill = document.getElementById('topProgressFill');
+  var countLabel = document.getElementById('countLabel');
+  var captionEl = document.getElementById('caption');
+  var captionText = document.getElementById('captionText');
+  var playBtn = document.getElementById('playBtn');
+  var prevBtn = document.getElementById('prevBtn');
+  var nextBtn = document.getElementById('nextBtn');
+  var voiceBtn = document.getElementById('voiceBtn');
+  var scriptBtn = document.getElementById('scriptBtn');
+  var fsBtn = document.getElementById('fsBtn');
+  var voiceModeDot = document.getElementById('voiceModeDot');
+  var hint = document.getElementById('hint');
+
+  var current = 0;
+  var isPlaying = false;
+  var voiceoverOn = true;
+  var scriptOn = false;
+
+  var synth = window.speechSynthesis;
+  var currentAudio = null;
+  var audioCache = {};
+
+  var simElapsed = 0, simDuration = 0, simTimer = null, simOnComplete = null;
+
+  function narrationTextFor(index){
+    var el = slides[index].querySelector('.narration');
+    return el ? el.textContent.trim() : '';
+  }
+
+  function estimateDuration(text){
+    return Math.max(2500, (text.length / CHARS_PER_SEC) * 1000);
+  }
+
+  function getAudio(index){
+    var num = index + 1;
+    var src = AUDIO[num];
+    if (!src) return null;
+    if (audioCache[num]) return audioCache[num];
+    var audio = new Audio(src);
+    audio.preload = 'auto';
+    audio.addEventListener('timeupdate', function(){
+      if (currentAudio === audio && audio.duration){
+        topFill.style.width = Math.min(100, (audio.currentTime / audio.duration) * 100) + '%';
+      }
+    });
+    audio.addEventListener('ended', function(){
+      if (isPlaying && currentAudio === audio) next();
+    });
+    audioCache[num] = audio;
+    return audio;
+  }
+
+  // ── sim progress (used for TTS narration and the "voiceover off" dwell) ──
+  function beginSim(durationMs, onComplete){
+    simElapsed = 0;
+    simDuration = durationMs;
+    simOnComplete = onComplete;
+    tickSim();
+  }
+  function tickSim(){
+    clearInterval(simTimer);
+    simTimer = setInterval(function(){
+      simElapsed += 100;
+      topFill.style.width = Math.min(100, (simElapsed / simDuration) * 100) + '%';
+      if (simElapsed >= simDuration){
+        clearInterval(simTimer); simTimer = null;
+        if (simOnComplete) simOnComplete();
+      }
+    }, 100);
+  }
+  function pauseSim(){ clearInterval(simTimer); simTimer = null; }
+  function resumeSim(){ if (simDuration) tickSim(); }
+
+  function setPlayIcon(playing){
+    playBtn.classList.toggle('is-playing', playing);
+    playBtn.setAttribute('aria-label', playing ? 'Pause' : 'Play');
+  }
+
+  function setVoiceModeIndicator(mode){
+    voiceModeDot.dataset.mode = mode;
+    var titles = {
+      cloned:'Playing your cloned voice',
+      preview:'Preview voice (browser speech)',
+      off:'Voiceover off, auto-advancing on a timer',
+      idle:'Voiceover ready'
+    };
+    voiceModeDot.parentElement.title = (titles[mode] || 'Voiceover') + ', click to toggle (V)';
+  }
+
+  function updateCount(){ countLabel.textContent = (current + 1) + ' / ' + total; }
+  function updateCaption(){ captionText.textContent = narrationTextFor(current); }
+
+  function resetProgress(){
+    topFill.style.transition = 'none';
+    topFill.style.width = '0%';
+    void topFill.offsetWidth;
+    topFill.style.transition = '';
+  }
+
+  function restartReveal(slideEl){
+    var inner = slideEl.querySelector('.slide__inner');
+    if (!inner) return;
+    inner.classList.remove('reveal');
+    void inner.offsetWidth;
+    inner.classList.add('reveal');
+  }
+
+  function showSlide(index){
+    if (slides[current]) slides[current].classList.remove('is-active');
+    current = index;
+    slides[current].classList.add('is-active');
+    updateCount();
+    updateCaption();
+    resetProgress();
+    restartReveal(slides[current]);
+  }
+
+  function stopAllPlayback(){
+    pauseSim();
+    simElapsed = 0;
+    simDuration = 0;
+    synth.cancel();
+    if (currentAudio){
+      currentAudio.pause();
+      currentAudio.currentTime = 0;
+      currentAudio = null;
+    }
+  }
+
+  function speakCurrent(text){
+    setVoiceModeIndicator('preview');
+    currentAudio = null;
+    synth.cancel();
+    var utter = new SpeechSynthesisUtterance(text);
+    utter.rate = 0.97;
+    utter.pitch = 1;
+    utter.onend = function(){ pauseSim(); if (isPlaying) next(); };
+    synth.speak(utter);
+    beginSim(estimateDuration(text), null);
+  }
+
+  function playCurrent(){
+    isPlaying = true;
+    setPlayIcon(true);
+
+    if (!voiceoverOn){
+      setVoiceModeIndicator('off');
+      beginSim(DWELL_MS, next);
+      return;
+    }
+
+    var text = narrationTextFor(current);
+    var audio = getAudio(current);
+    if (!audio){ speakCurrent(text); return; }
+
+    var resolved = false;
+    var useAudio = function(){
+      if (resolved) return; resolved = true;
+      setVoiceModeIndicator('cloned');
+      currentAudio = audio;
+      audio.currentTime = 0;
+      audio.play().catch(function(){ resolved = false; speakCurrent(text); });
+    };
+    var fallback = function(){
+      if (resolved) return; resolved = true;
+      speakCurrent(text);
+    };
+
+    if (audio.dataset.state === 'error'){ fallback(); return; }
+    if (audio.dataset.state === 'ready' || audio.readyState >= 3){ useAudio(); return; }
+
+    audio.addEventListener('error', function onErr(){
+      audio.dataset.state = 'error';
+      audio.removeEventListener('error', onErr);
+      fallback();
+    }, { once:true });
+    audio.addEventListener('canplaythrough', function onReady(){
+      audio.dataset.state = 'ready';
+      audio.removeEventListener('canplaythrough', onReady);
+      useAudio();
+    }, { once:true });
+    audio.load();
+    setTimeout(fallback, 1400); // grace period if the file never resolves
+  }
+
+  function pause(){
+    isPlaying = false;
+    setPlayIcon(false);
+    pauseSim();
+    if (synth.speaking) synth.pause();
+    if (currentAudio && !currentAudio.paused) currentAudio.pause();
+  }
+
+  function togglePlay(){
+    if (isPlaying){ pause(); return; }
+    isPlaying = true;
+    setPlayIcon(true);
+
+    // Resume a paused MP3 mid-slide.
+    if (currentAudio && !currentAudio.ended && currentAudio.currentTime > 0){
+      currentAudio.play().catch(function(){ isPlaying = false; setPlayIcon(false); playCurrent(); });
+      return;
+    }
+    // Resume a paused TTS narration or a paused "voiceover off" dwell timer.
+    if (simDuration && simElapsed < simDuration){
+      if (synth.paused) synth.resume();
+      resumeSim();
+      return;
+    }
+    // Fresh start: first play, or the previous slide finished naturally.
+    playCurrent();
+  }
+
+  function goTo(index){
+    if (index < 0 || index >= total || index === current) return;
+    var wasPlaying = isPlaying;
+    stopAllPlayback();
+    showSlide(index);
+    if (wasPlaying){ playCurrent(); } else { isPlaying = false; setPlayIcon(false); }
+  }
+
+  function next(){
+    if (current < total - 1){ goTo(current + 1); }
+    else { pause(); }
+  }
+  function prev(){ goTo(Math.max(current - 1, 0)); }
+
+  function toggleVoiceover(){
+    voiceoverOn = !voiceoverOn;
+    voiceBtn.classList.toggle('is-active', voiceoverOn);
+    voiceBtn.classList.toggle('is-off', !voiceoverOn);
+    voiceBtn.setAttribute('aria-pressed', String(voiceoverOn));
+    if (isPlaying){
+      stopAllPlayback();
+      resetProgress();
+      playCurrent();
+    } else {
+      setVoiceModeIndicator(voiceoverOn ? 'idle' : 'off');
+    }
+  }
+
+  function toggleScript(){
+    scriptOn = !scriptOn;
+    scriptBtn.classList.toggle('is-active', scriptOn);
+    scriptBtn.setAttribute('aria-pressed', String(scriptOn));
+    captionEl.classList.toggle('is-visible', scriptOn);
+  }
+
+  function toggleFullscreen(){
+    if (!document.fullscreenElement){
+      (deck.requestFullscreen || deck.webkitRequestFullscreen || function(){}).call(deck).catch(function(){});
+    } else {
+      (document.exitFullscreen || document.webkitExitFullscreen || function(){}).call(document);
+    }
+  }
+  document.addEventListener('fullscreenchange', function(){
+    fsBtn.classList.toggle('is-active', !!document.fullscreenElement);
+  });
+
+  function dismissHint(){
+    hint.classList.add('is-hidden');
+  }
+
+  // ── wiring ──────────────────────────────────────────────────────
+  prevBtn.addEventListener('click', function(){ dismissHint(); prev(); });
+  nextBtn.addEventListener('click', function(){ dismissHint(); next(); });
+  playBtn.addEventListener('click', function(){ dismissHint(); togglePlay(); });
+  voiceBtn.addEventListener('click', function(){ dismissHint(); toggleVoiceover(); });
+  scriptBtn.addEventListener('click', function(){ dismissHint(); toggleScript(); });
+  fsBtn.addEventListener('click', function(){ dismissHint(); toggleFullscreen(); });
+
+  document.addEventListener('keydown', function(e){
+    if (e.key === ' ' || e.code === 'Space'){ e.preventDefault(); }
+    dismissHint();
+    switch(e.key){
+      case 'ArrowRight': next(); break;
+      case 'ArrowLeft': prev(); break;
+      case ' ': togglePlay(); break;
+      case 'v': case 'V': toggleVoiceover(); break;
+      case 's': case 'S': toggleScript(); break;
+      case 'f': case 'F': toggleFullscreen(); break;
+    }
+  });
+
+  setTimeout(dismissHint, 6500);
+
+  // ── init ────────────────────────────────────────────────────────
+  updateCount();
+  updateCaption();
+  restartReveal(slides[0]);
+  setVoiceModeIndicator('idle');
+})();
+</script>
+
+</body>
+</html>
