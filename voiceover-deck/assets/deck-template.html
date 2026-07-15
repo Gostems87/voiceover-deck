@@ -105,6 +105,64 @@
   }
   .hint.is-hidden{ opacity:0; transform:translate(-50%,-8px); pointer-events:none; }
 
+  /* ---------- export-to-pptx button ---------- */
+  .export-btn{
+    position:fixed;
+    top:20px; right:20px;
+    z-index:58;
+    display:inline-flex;
+    align-items:center;
+    gap:8px;
+    padding:9px 16px 9px 13px;
+    border-radius:999px;
+    border:1px solid rgba(255,255,255,.14);
+    background:rgba(16,20,42,.5);
+    backdrop-filter:blur(14px) saturate(150%);
+    -webkit-backdrop-filter:blur(14px) saturate(150%);
+    color:rgba(255,255,255,.68);
+    font-family:var(--font-sans);
+    font-size:.78rem;
+    font-weight:600;
+    letter-spacing:-.005em;
+    cursor:pointer;
+    opacity:.55;
+    transition:opacity .25s var(--ease), background .25s var(--ease), color .2s var(--ease), transform .2s var(--ease-soft), box-shadow .25s var(--ease-soft);
+    box-shadow:0 8px 20px rgba(8,11,26,.2);
+  }
+  .export-btn:hover, .export-btn:focus-visible{
+    opacity:1;
+    background:rgba(16,20,42,.88);
+    color:var(--white);
+    border-color:rgba(255,255,255,.22);
+    transform:translateY(-1px);
+  }
+  .export-btn:active{ transform:translateY(0) scale(.97); }
+  .export-btn:focus-visible{ outline:none; box-shadow:0 8px 20px rgba(8,11,26,.2), var(--focus-ring); }
+  .export-btn svg{ flex:none; }
+  .export-btn.is-busy{ pointer-events:none; opacity:.8; }
+  .export-btn__label{ white-space:nowrap; }
+
+  .export-toast{
+    position:fixed;
+    top:66px; right:20px;
+    z-index:58;
+    max-width:240px;
+    background:rgba(15,19,40,.94);
+    color:var(--white);
+    font-family:var(--font-sans);
+    font-size:.78rem;
+    line-height:1.45;
+    padding:10px 14px;
+    border-radius:12px;
+    border:1px solid rgba(255,255,255,.1);
+    box-shadow:0 14px 30px rgba(8,11,26,.3);
+    opacity:0;
+    transform:translateY(-6px);
+    pointer-events:none;
+    transition:opacity .3s var(--ease-soft), transform .3s var(--ease-soft);
+  }
+  .export-toast.is-visible{ opacity:1; transform:translateY(0); }
+
   /* ---------- slides ---------- */
   .slide{
     position:absolute;
@@ -552,6 +610,8 @@
     .stat:last-child{ padding:0; }
     .stat__divider{ display:none; }
     .hint{ font-size:.7rem; padding:8px 14px; max-width:88vw; white-space:normal; text-align:center; }
+    .export-btn{ top:14px; right:14px; padding:8px 13px 8px 11px; font-size:.72rem; }
+    .export-toast{ top:56px; right:14px; max-width:72vw; }
     .brand-logo{ width:132px; }
     .ghost-num{ font-size:9rem; top:-2vh; }
     .caption{ bottom:98px; padding:13px 18px; font-size:.88rem; }
@@ -580,6 +640,12 @@
   <div class="top-progress"><div class="top-progress__fill" id="topProgressFill"></div></div>
 
   <div class="hint" id="hint">Space to play &nbsp;&middot;&nbsp; &larr; &rarr; to move &nbsp;&middot;&nbsp; V voiceover &nbsp;&middot;&nbsp; S script &nbsp;&middot;&nbsp; F fullscreen</div>
+
+  <button class="export-btn" id="exportPptxBtn" type="button" aria-label="Export to PowerPoint" title="Export to PowerPoint">
+    <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M12 3v10m0 0l-3.5-3.5M12 13l3.5-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <span class="export-btn__label">Export to PowerPoint</span>
+  </button>
+  <div class="export-toast" id="exportToast" role="status" aria-live="polite"></div>
 
   <!-- Slides are built at load time from the DECK config below and
        injected here. Do not hand-write <section> markup — edit DECK
@@ -1260,6 +1326,445 @@
   updateCaption();
   restartReveal(slides[0]);
   setVoiceModeIndicator('idle');
+
+  // ==================================================================
+  // EXPORT TO POWERPOINT — builds a native, editable .pptx from the
+  // rendered slides (headline/support/stats/etc. text, read straight
+  // off this DOM) plus the CSS brand tokens, entirely client-side.
+  // PptxGenJS loads from a CDN only on first click, so the deck stays
+  // light and offline-friendly for normal viewing.
+  // ==================================================================
+  (function initPptxExport(){
+    var exportBtn = document.getElementById('exportPptxBtn');
+    var exportToast = document.getElementById('exportToast');
+    if (!exportBtn) return;
+
+    var PPTX_CDN = 'https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js';
+    var pptxLoadState = 'idle'; // idle | loading | ready | error
+    var toastTimer = null;
+
+    function showToast(message){
+      if (!exportToast) return;
+      exportToast.textContent = message;
+      exportToast.classList.add('is-visible');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(function(){ exportToast.classList.remove('is-visible'); }, 4200);
+    }
+
+    function loadPptxLib(onReady, onError){
+      if (window.PptxGenJS){ pptxLoadState = 'ready'; onReady(); return; }
+      if (pptxLoadState === 'loading'){
+        var check = setInterval(function(){
+          if (window.PptxGenJS){ clearInterval(check); pptxLoadState = 'ready'; onReady(); }
+        }, 150);
+        return;
+      }
+      pptxLoadState = 'loading';
+      var script = document.createElement('script');
+      script.src = PPTX_CDN;
+      script.integrity = 'sha384-Cck14aA9cifjYolcnjebXRfWGkz5ltHMBiG4px/j8GS+xQcb7OhNQWZYyWjQ+UwQ';
+      script.crossOrigin = 'anonymous';
+      script.async = true;
+      script.onload = function(){
+        if (window.PptxGenJS){ pptxLoadState = 'ready'; onReady(); }
+        else { pptxLoadState = 'error'; onError(); }
+      };
+      script.onerror = function(){ pptxLoadState = 'error'; onError(); };
+      document.head.appendChild(script);
+    }
+
+    // ── brand tokens, read live from the CSS custom properties so this
+    // exact same export code produces an on-brand deck for whichever
+    // brand config is loaded in :root. ──
+    function readBrand(){
+      var css = getComputedStyle(document.documentElement);
+      function cssVar(name, fallback){
+        var v = css.getPropertyValue(name);
+        v = v ? v.trim() : '';
+        return v || fallback;
+      }
+      function hex(name, fallback){
+        var v = cssVar(name, fallback).replace(/^#/, '').trim();
+        return v || fallback;
+      }
+      function firstFont(name, fallback){
+        var v = cssVar(name, fallback);
+        var first = (v.split(',')[0] || fallback).replace(/['"]/g, '').trim();
+        return first || fallback;
+      }
+      return {
+        navy: hex('--navy', '1E293B'),
+        navyDeep: hex('--navy-deep', '0F172A'),
+        turquoise: hex('--turquoise', '6366F1'),
+        blue: hex('--blue', '0EA5E9'),
+        white: hex('--white', 'FFFFFF'),
+        ink: hex('--ink', '1E293B'),
+        serif: firstFont('--font-serif', 'Georgia'),
+        sans: firstFont('--font-sans', 'Arial')
+      };
+    }
+
+    // ── read a slide's data straight off the rendered DOM — the same
+    // markup the DECK config (or hand-written slides) produced, so this
+    // works whether or not the page defines a DECK object. ──
+    function textWithBreaks(elm){
+      if (!elm) return '';
+      var html = (elm.innerHTML || '').replace(/<br\s*\/?>/gi, '\n');
+      var tmp = document.createElement('div');
+      tmp.innerHTML = html;
+      return (tmp.textContent || '').trim();
+    }
+    function textOf(elm){ return elm ? elm.textContent.trim() : ''; }
+
+    function readSlideData(section){
+      var isBookend = section.classList.contains('slide--bookend');
+      var hasCta = !!section.querySelector('.cta-btn');
+      var hasStats = !!section.querySelector('.stats');
+      var hasConvergence = !!section.querySelector('.convergence');
+      var type = isBookend ? (hasCta ? 'close' : 'title')
+        : hasStats ? 'stats'
+        : hasConvergence ? 'convergence'
+        : 'content';
+
+      return {
+        type: type,
+        narration: textOf(section.querySelector('.narration')),
+        eyebrow: textOf(section.querySelector('.eyebrow')),
+        headline: textWithBreaks(section.querySelector('.headline')),
+        support: textOf(section.querySelector('.support-line')),
+        lede: textOf(section.querySelector('.lede')),
+        proof: textOf(section.querySelector('.proof-chip')),
+        tags: Array.prototype.map.call(section.querySelectorAll('.tag-row .tag'), textOf),
+        stats: Array.prototype.map.call(section.querySelectorAll('.stat'), function(stat){
+          return {
+            num: textOf(stat.querySelector('.stat__num')),
+            label: textOf(stat.querySelector('.stat__label'))
+          };
+        }),
+        chips: Array.prototype.map.call(section.querySelectorAll('.convergence__chip'), textOf),
+        label: textOf(section.querySelector('.convergence__label')),
+        ctaLabel: textOf(section.querySelector('.cta-btn')),
+        // ── media/logo/credit are read straight off the DOM, same as
+        // every other field here — a slide only gets photo treatment
+        // in the export because it has a .slide-media img on the page,
+        // full stop. No slide numbers or brand names hardcoded. ──
+        mediaEl: section.querySelector('.slide-media img'),
+        logoSrc: (function(){ var el = section.querySelector('.brand-logo'); return el ? (el.currentSrc || el.src) : null; })(),
+        creditText: (function(){ var el = section.querySelector('.image-credit'); return el ? el.textContent.trim() : null; })()
+      };
+    }
+
+    function slugify(str){
+      return (str || '')
+        .toLowerCase()
+        .replace(/&amp;/g, 'and')
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 60);
+    }
+    function fileName(){
+      var slug = slugify(document.title);
+      return (slug || 'presentation') + '.pptx';
+    }
+
+    // ── image helpers — a slide only carries a photo, logo or credit
+    // line in the export because it finds one on the live page at
+    // export time. No image path, logo file or credit text is ever
+    // hardcoded here, so a neutral template with none of these DOM
+    // elements falls straight through to today's plain-navy slides. ──
+    function imageSrcOptions(src){
+      // PptxGenJS wants base64 data URIs under `data`, and ordinary
+      // URLs/relative paths under `path` — this works whichever way
+      // a given deck chooses to ship its images.
+      return (src.indexOf('data:') === 0) ? { data: src } : { path: src };
+    }
+
+    function addLogo(slide, logoSrc){
+      var opts = imageSrcOptions(logoSrc);
+      opts.x = 0.6; opts.y = 0.55; opts.w = 1.7;
+      opts.sizing = { type: 'contain', w: 1.7, h: 0.65 };
+      slide.addImage(opts);
+    }
+
+    // ── full-bleed photo + graded navy wash, matching the on-screen
+    // .slide-media treatment: a flat wash across the whole slide, plus
+    // a darker band behind the text column. opts: { flatAlpha, bandAlpha,
+    // bandWidthIn }. transparency is PptxGenJS's inverse of CSS alpha. ──
+    function addMediaBackground(pres, slide, brand, s, opts){
+      var imgOpts = imageSrcOptions(s.mediaEl.currentSrc || s.mediaEl.src);
+      imgOpts.x = 0; imgOpts.y = 0; imgOpts.w = 10; imgOpts.h = 5.63;
+      imgOpts.sizing = { type: 'cover', w: 10, h: 5.63 };
+      slide.addImage(imgOpts);
+      slide.addShape(pres.shapes.RECTANGLE, { x: 0, y: 0, w: 10, h: 5.63, fill: { color: brand.navy, transparency: Math.round(100 - opts.flatAlpha * 100) } });
+      slide.addShape(pres.shapes.RECTANGLE, { x: 0, y: 0, w: opts.bandWidthIn, h: 5.63, fill: { color: brand.navy, transparency: Math.round(100 - opts.bandAlpha * 100) } });
+    }
+
+    // ── slide builders — one branded layout per DECK slide type ──
+    function addTitleSlide(pres, brand, s){
+      var slide = pres.addSlide();
+      slide.background = { color: brand.navyDeep };
+      if (s.mediaEl){
+        addMediaBackground(pres, slide, brand, s, { flatAlpha: .58, bandAlpha: .80, bandWidthIn: 5.6 });
+        if (s.logoSrc) addLogo(slide, s.logoSrc);
+      }
+      slide.addShape(pres.shapes.RECTANGLE, { x: 0.6, y: 1.5, w: 0.4, h: 0.05, fill: { color: brand.turquoise } });
+      slide.addText(s.headline || 'Untitled', {
+        x: 0.6, y: 1.68, w: 8.8, h: 1.7, fontFace: brand.serif, fontSize: 40,
+        color: brand.white, align: 'left', valign: 'top', margin: 0
+      });
+      if (s.lede){
+        slide.addText(s.lede, {
+          x: 0.6, y: 3.4, w: 7.6, h: 0.9, fontFace: brand.sans, fontSize: 15,
+          color: 'E7E9F5', align: 'left', valign: 'top', margin: 0
+        });
+      }
+      if (s.narration) slide.addNotes(s.narration);
+      return slide;
+    }
+
+    function addContentSlide(pres, brand, s){
+      var slide = pres.addSlide();
+      slide.background = { color: 'FFFFFF' };
+      var y = 0.5;
+      if (s.eyebrow){
+        slide.addText(s.eyebrow.toUpperCase(), {
+          x: 0.6, y: y, w: 8.8, h: 0.4, fontFace: brand.sans, fontSize: 11,
+          bold: true, color: brand.turquoise, charSpacing: 2, margin: 0
+        });
+        y += 0.55;
+      }
+      slide.addText(s.headline || '', {
+        x: 0.6, y: y, w: 8.8, h: 1.15, fontFace: brand.serif, fontSize: 27,
+        color: brand.ink, align: 'left', valign: 'top', margin: 0
+      });
+      y += 1.25;
+      if (s.support){
+        slide.addText(s.support, {
+          x: 0.6, y: y, w: 7.7, h: 1.0, fontFace: brand.sans, fontSize: 13.5,
+          color: brand.ink, align: 'left', valign: 'top', margin: 0
+        });
+        y += 0.95;
+      }
+      if (s.proof){
+        slide.addShape(pres.shapes.RECTANGLE, {
+          x: 0.6, y: y, w: 0.14, h: 0.14, fill: { color: brand.turquoise }
+        });
+        slide.addText(s.proof, {
+          x: 0.86, y: y - 0.1, w: 7.4, h: 0.4, fontFace: brand.sans, fontSize: 12.5,
+          bold: true, color: brand.ink, align: 'left', valign: 'top', margin: 0
+        });
+        y += 0.55;
+      }
+      if (s.tags && s.tags.length){
+        var items = s.tags.map(function(tag, i){
+          return { text: tag, options: { bullet: true, breakLine: i < s.tags.length - 1 } };
+        });
+        slide.addText(items, {
+          x: 0.6, y: y, w: 7.7, h: 1.6, fontFace: brand.sans, fontSize: 13,
+          color: brand.ink, align: 'left', valign: 'top', margin: 0, paraSpaceAfter: 6
+        });
+      }
+      if (s.narration) slide.addNotes(s.narration);
+      return slide;
+    }
+
+    // ── a "content" slide that also carries a photo (a section-divider
+    // moment, not an intro slide) needs the dark-theme text colours the
+    // on-screen deck switches to once .slide-media is present — same
+    // layout as addContentSlide, different palette. ──
+    function addDividerSlide(pres, brand, s){
+      var slide = pres.addSlide();
+      slide.background = { color: brand.navyDeep };
+      if (s.mediaEl){
+        addMediaBackground(pres, slide, brand, s, { flatAlpha: .70, bandAlpha: .88, bandWidthIn: 5.6 });
+      }
+      var y = 0.5;
+      if (s.eyebrow){
+        slide.addText(s.eyebrow.toUpperCase(), {
+          x: 0.6, y: y, w: 8.8, h: 0.4, fontFace: brand.sans, fontSize: 11,
+          bold: true, color: brand.turquoise, charSpacing: 2, margin: 0
+        });
+        y += 0.55;
+      }
+      slide.addText(s.headline || '', {
+        x: 0.6, y: y, w: 8.8, h: 1.15, fontFace: brand.serif, fontSize: 27,
+        color: brand.white, align: 'left', valign: 'top', margin: 0
+      });
+      y += 1.25;
+      if (s.support){
+        slide.addText(s.support, {
+          x: 0.6, y: y, w: 7.7, h: 1.0, fontFace: brand.sans, fontSize: 13.5,
+          color: 'E7E9F5', align: 'left', valign: 'top', margin: 0
+        });
+        y += 0.95;
+      }
+      if (s.proof){
+        slide.addShape(pres.shapes.RECTANGLE, {
+          x: 0.6, y: y, w: 0.14, h: 0.14, fill: { color: brand.turquoise }
+        });
+        slide.addText(s.proof, {
+          x: 0.86, y: y - 0.1, w: 7.4, h: 0.4, fontFace: brand.sans, fontSize: 12.5,
+          bold: true, color: brand.white, align: 'left', valign: 'top', margin: 0
+        });
+        y += 0.55;
+      }
+      if (s.tags && s.tags.length){
+        var items = s.tags.map(function(tag, i){
+          return { text: tag, options: { bullet: true, breakLine: i < s.tags.length - 1 } };
+        });
+        slide.addText(items, {
+          x: 0.6, y: y, w: 7.7, h: 1.6, fontFace: brand.sans, fontSize: 13,
+          color: brand.white, align: 'left', valign: 'top', margin: 0, paraSpaceAfter: 6
+        });
+      }
+      if (s.narration) slide.addNotes(s.narration);
+      return slide;
+    }
+
+    function addStatsSlide(pres, brand, s){
+      var slide = pres.addSlide();
+      slide.background = { color: brand.navyDeep };
+      var y = 0.5;
+      if (s.eyebrow){
+        slide.addText(s.eyebrow.toUpperCase(), {
+          x: 0.6, y: y, w: 8.8, h: 0.4, fontFace: brand.sans, fontSize: 11,
+          bold: true, color: brand.turquoise, charSpacing: 2, margin: 0
+        });
+        y += 0.55;
+      }
+      slide.addText(s.headline || '', {
+        x: 0.6, y: y, w: 8.8, h: 1.1, fontFace: brand.serif, fontSize: 26,
+        color: brand.white, align: 'left', valign: 'top', margin: 0
+      });
+      var stats = s.stats && s.stats.length ? s.stats : [];
+      var n = stats.length || 1;
+      var totalW = 8.8, gap = 0.35;
+      var colW = (totalW - gap * (n - 1)) / n;
+      stats.forEach(function(stat, i){
+        var x = 0.6 + i * (colW + gap);
+        slide.addText(stat.num || '', {
+          x: x, y: 3.05, w: colW, h: 1.0, fontFace: brand.serif, fontSize: 34,
+          color: brand.turquoise, align: 'left', valign: 'bottom', margin: 0
+        });
+        slide.addText((stat.label || '').toUpperCase(), {
+          x: x, y: 4.05, w: colW, h: 0.5, fontFace: brand.sans, fontSize: 10,
+          bold: true, color: 'E7E9F5', charSpacing: 1, align: 'left', valign: 'top', margin: 0
+        });
+      });
+      if (s.narration) slide.addNotes(s.narration);
+      return slide;
+    }
+
+    function addConvergenceSlide(pres, brand, s){
+      var slide = pres.addSlide();
+      slide.background = { color: 'F1F3FA' };
+      var y = 0.55;
+      if (s.eyebrow){
+        slide.addText(s.eyebrow.toUpperCase(), {
+          x: 0.6, y: y, w: 8.8, h: 0.4, fontFace: brand.sans, fontSize: 11,
+          bold: true, color: brand.turquoise, charSpacing: 2, margin: 0
+        });
+        y += 0.55;
+      }
+      slide.addText(s.headline || '', {
+        x: 0.6, y: y, w: 8.8, h: 1.0, fontFace: brand.serif, fontSize: 26,
+        color: brand.ink, align: 'left', valign: 'top', margin: 0
+      });
+      y += 1.15;
+      if (s.chips && s.chips.length){
+        var items = s.chips.map(function(chip, i){
+          return { text: chip, options: { bullet: true, breakLine: i < s.chips.length - 1 } };
+        });
+        var chipsBoxH = Math.min(2.4, 0.42 * s.chips.length + 0.2);
+        slide.addText(items, {
+          x: 0.6, y: y, w: 7.8, h: chipsBoxH, fontFace: brand.sans, fontSize: 13.5,
+          bold: true, color: brand.ink, align: 'left', valign: 'top', margin: 0, paraSpaceAfter: 8
+        });
+        y += chipsBoxH + 0.25;
+      }
+      if (s.label){
+        slide.addText(s.label, {
+          x: 0.6, y: Math.min(y, 4.9), w: 8.4, h: 0.4, fontFace: brand.sans, fontSize: 11,
+          bold: true, color: brand.blue, charSpacing: 1.5, align: 'left', valign: 'top', margin: 0
+        });
+      }
+      if (s.narration) slide.addNotes(s.narration);
+      return slide;
+    }
+
+    function addCloseSlide(pres, brand, s){
+      var slide = pres.addSlide();
+      slide.background = { color: brand.navyDeep };
+      if (s.mediaEl){
+        addMediaBackground(pres, slide, brand, s, { flatAlpha: .64, bandAlpha: .84, bandWidthIn: 5.6 });
+        if (s.logoSrc) addLogo(slide, s.logoSrc);
+      }
+      slide.addShape(pres.shapes.RECTANGLE, { x: 0.6, y: 1.5, w: 0.4, h: 0.05, fill: { color: brand.turquoise } });
+      slide.addText(s.headline || 'Untitled', {
+        x: 0.6, y: 1.68, w: 8.8, h: 1.4, fontFace: brand.serif, fontSize: 36,
+        color: brand.white, align: 'left', valign: 'top', margin: 0
+      });
+      var y = 3.15;
+      if (s.lede){
+        slide.addText(s.lede, {
+          x: 0.6, y: y, w: 7.6, h: 0.6, fontFace: brand.sans, fontSize: 15,
+          color: 'E7E9F5', align: 'left', valign: 'top', margin: 0
+        });
+        y += 0.65;
+      }
+      if (s.ctaLabel){
+        slide.addText(s.ctaLabel, {
+          x: 0.6, y: y, w: 7.6, h: 0.5, fontFace: brand.sans, fontSize: 14,
+          bold: true, color: brand.turquoise, align: 'left', valign: 'top', margin: 0
+        });
+      }
+      if (s.creditText){
+        slide.addText(s.creditText, {
+          x: 6.7, y: 5.28, w: 3.0, h: 0.28, fontFace: brand.sans, fontSize: 7.5,
+          color: 'C7CBE8', align: 'right', valign: 'bottom', margin: 0
+        });
+      }
+      if (s.narration) slide.addNotes(s.narration);
+      return slide;
+    }
+
+    var BUILDERS = {
+      title: addTitleSlide,
+      content: function(pres, brand, s){ return (s.mediaEl ? addDividerSlide : addContentSlide)(pres, brand, s); },
+      stats: addStatsSlide,
+      convergence: addConvergenceSlide,
+      close: addCloseSlide
+    };
+
+    function buildPresentation(){
+      var pres = new window.PptxGenJS();
+      pres.layout = 'LAYOUT_16x9';
+      pres.title = document.title || 'Presentation';
+      var brand = readBrand();
+      slides.forEach(function(section){
+        var s = readSlideData(section);
+        var build = BUILDERS[s.type] || addContentSlide;
+        build(pres, brand, s);
+      });
+      pres.writeFile({ fileName: fileName() });
+    }
+
+    exportBtn.addEventListener('click', function(){
+      if (exportBtn.classList.contains('is-busy')) return;
+      exportBtn.classList.add('is-busy');
+      loadPptxLib(function(){
+        try {
+          buildPresentation();
+        } catch (err) {
+          showToast('Export failed. Please try again.');
+        }
+        exportBtn.classList.remove('is-busy');
+      }, function(){
+        exportBtn.classList.remove('is-busy');
+        showToast('Export needs an internet connection.');
+      });
+    });
+  })();
 })();
 </script>
 
