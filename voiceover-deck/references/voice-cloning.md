@@ -15,7 +15,7 @@ Of the self-serve voice-cloning tools compared (ElevenLabs, PlayHT, Descript, Re
 
 **One-time: connect the API (unlocks the automatic generator below)**
 1. Go to `https://elevenlabs.io/app/settings/api-keys` and click "Create API Key". This needs API access on the plan — check it's enabled if the key doesn't work.
-2. Open this project's `.env` (copy it from `.env.example` first if it doesn't exist yet) and paste the key in:
+2. Open this project's `.env` (if it doesn't exist yet, copy the `.env.example` file that ships in this skill folder into your project's root folder and rename it `.env`) and paste the key in:
    ```
    ELEVENLABS_API_KEY=your-key-here
    ```

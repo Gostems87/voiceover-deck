@@ -925,9 +925,34 @@
   var voiceoverOn = true;
   var scriptOn = false;
 
-  var synth = window.speechSynthesis;
+  var synth = window.speechSynthesis || null;
   var currentAudio = null;
   var audioCache = {};
+
+  // ── voice priming (Chrome loads its voice list asynchronously; the
+  // first speak() call before it's ready can come out silent or use the
+  // wrong voice). Kick getVoices() now and cache a sensible default the
+  // moment the list is ready, so the always-on browser-speech fallback
+  // never fails silently. ──
+  var preferredVoice = null;
+  function pickPreferredVoice(voices){
+    if (!voices || !voices.length) return null;
+    return voices.find(function(v){ return /en-GB/i.test(v.lang); })
+        || voices.find(function(v){ return /en-US/i.test(v.lang); })
+        || voices[0];
+  }
+  if (synth){
+    (function primeVoices(){
+      var voices = synth.getVoices();
+      if (voices && voices.length){
+        preferredVoice = pickPreferredVoice(voices);
+      } else if (synth.addEventListener){
+        synth.addEventListener('voiceschanged', primeVoices, { once:true });
+      } else {
+        synth.onvoiceschanged = primeVoices;
+      }
+    })();
+  }
 
   var simElapsed = 0, simDuration = 0, simTimer = null, simOnComplete = null;
 
@@ -1028,7 +1053,7 @@
     pauseSim();
     simElapsed = 0;
     simDuration = 0;
-    synth.cancel();
+    if (synth) synth.cancel();
     if (currentAudio){
       currentAudio.pause();
       currentAudio.currentTime = 0;
@@ -1039,10 +1064,17 @@
   function speakCurrent(text){
     setVoiceModeIndicator('preview');
     currentAudio = null;
+    if (!synth){
+      // No speech engine at all (rare/unsupported browser) — still
+      // advance the deck on the usual dwell timer, just silently.
+      beginSim(estimateDuration(text), function(){ if (isPlaying) next(); });
+      return;
+    }
     synth.cancel();
     var utter = new SpeechSynthesisUtterance(text);
     utter.rate = 0.97;
     utter.pitch = 1;
+    if (preferredVoice) utter.voice = preferredVoice;
     utter.onend = function(){ pauseSim(); if (isPlaying) next(); };
     synth.speak(utter);
     beginSim(estimateDuration(text), null);
@@ -1096,7 +1128,7 @@
     isPlaying = false;
     setPlayIcon(false);
     pauseSim();
-    if (synth.speaking) synth.pause();
+    if (synth && synth.speaking) synth.pause();
     if (currentAudio && !currentAudio.paused) currentAudio.pause();
   }
 
@@ -1112,7 +1144,7 @@
     }
     // Resume a paused TTS narration or a paused "voiceover off" dwell timer.
     if (simDuration && simElapsed < simDuration){
-      if (synth.paused) synth.resume();
+      if (synth && synth.paused) synth.resume();
       resumeSim();
       return;
     }
@@ -1190,6 +1222,36 @@
       case 'f': case 'F': toggleFullscreen(); break;
     }
   });
+
+  // ── touch / swipe navigation (mobile) ──────────────────────────
+  // Listens on the deck container, not the whole document, so taps on
+  // the control bar and its buttons keep working untouched. A swipe is
+  // only recognised when it's clearly horizontal, so vertical scrolling
+  // (and control-bar taps) are never hijacked.
+  var touchStartX = null, touchStartY = null, touchTracking = false;
+  deck.addEventListener('touchstart', function(e){
+    var t = e.target;
+    if ((t && t.closest && t.closest('.controls')) || !e.touches || e.touches.length !== 1){
+      touchTracking = false;
+      return;
+    }
+    touchStartX = e.touches[0].clientX;
+    touchStartY = e.touches[0].clientY;
+    touchTracking = true;
+  }, { passive:true });
+  deck.addEventListener('touchend', function(e){
+    if (!touchTracking || touchStartX === null){ touchTracking = false; return; }
+    touchTracking = false;
+    var touch = e.changedTouches && e.changedTouches[0];
+    if (!touch) return;
+    var dx = touch.clientX - touchStartX;
+    var dy = touch.clientY - touchStartY;
+    touchStartX = null; touchStartY = null;
+    if (Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy)){
+      dismissHint();
+      if (dx < 0){ next(); } else { prev(); }
+    }
+  }, { passive:true });
 
   setTimeout(dismissHint, 6500);
 
