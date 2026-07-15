@@ -1428,6 +1428,12 @@
 
       return {
         type: type,
+        // ── theme/bg/accent mirror the on-screen data-* cascade, so the
+        // export can follow whichever rhythm the deck's CSS defines
+        // instead of a second, hardcoded palette. ──
+        theme: section.getAttribute('data-theme') || 'light',
+        bg: section.getAttribute('data-bg') || null,
+        accent: section.getAttribute('data-accent') || null,
         narration: textOf(section.querySelector('.narration')),
         eyebrow: textOf(section.querySelector('.eyebrow')),
         headline: textWithBreaks(section.querySelector('.headline')),
@@ -1447,9 +1453,12 @@
         // ── media/logo/credit are read straight off the DOM, same as
         // every other field here — a slide only gets photo treatment
         // in the export because it has a .slide-media img on the page,
-        // full stop. No slide numbers or brand names hardcoded. ──
+        // full stop. No slide numbers or brand names hardcoded. The
+        // logo is captured as the live <img> element (not just its src)
+        // so the export can read its natural width/height and size the
+        // wordmark honestly instead of guessing a box. ──
         mediaEl: section.querySelector('.slide-media img'),
-        logoSrc: (function(){ var el = section.querySelector('.brand-logo'); return el ? (el.currentSrc || el.src) : null; })(),
+        logoEl: section.querySelector('.brand-logo'),
         creditText: (function(){ var el = section.querySelector('.image-credit'); return el ? el.textContent.trim() : null; })()
       };
     }
@@ -1479,42 +1488,179 @@
       return (src.indexOf('data:') === 0) ? { data: src } : { path: src };
     }
 
-    function addLogo(slide, logoSrc){
-      var opts = imageSrcOptions(logoSrc);
-      opts.x = 0.6; opts.y = 0.55; opts.w = 1.7;
-      opts.sizing = { type: 'contain', w: 1.7, h: 0.65 };
+    // ── background resolver — mirrors the on-screen data-theme/data-bg
+    // cascade instead of a second, hardcoded palette: dark + bg="deep"
+    // reads --navy-deep, dark otherwise reads --navy, light with a bg
+    // token reads that token's own --bg-{token} custom property (so a
+    // retheme in the CSS is picked up automatically), light with none
+    // is plain white. ──
+    function cssVarHex(name, fallback){
+      var v = getComputedStyle(document.documentElement).getPropertyValue(name);
+      v = (v || '').trim().replace(/^#/, '');
+      return v || fallback;
+    }
+    function resolveBg(brand, s){
+      if (s.theme === 'dark') return s.bg === 'deep' ? brand.navyDeep : brand.navy;
+      if (s.bg) return cssVarHex('--bg-' + s.bg, 'FFFFFF');
+      return 'FFFFFF';
+    }
+    function resolveAccent(brand, s){
+      return s.accent === 'blue' ? brand.blue : brand.turquoise;
+    }
+
+    // ── the logo: never stretched. Its rendered aspect ratio always
+    // equals its natural aspect ratio — computed here from the live DOM
+    // image, which is already loaded — and no `sizing` box is ever
+    // passed, because that's what was silently squashing the wordmark
+    // into a wrong-ratio box. ──
+    function addLogo(slide, logoEl){
+      if (!logoEl) return;
+      var nw = logoEl.naturalWidth, nh = logoEl.naturalHeight;
+      if (!nw || !nh) return;                     // never draw a logo we cannot size honestly
+      var ratio = nw / nh;
+      var h = 0.4;                                 // target logo height, inches
+      var w = h * ratio;
+      if (w > 2.6){ w = 2.6; h = w / ratio; }       // cap for an unusually wide mark
+      if (w < 1.2 || h < 0.25) return;              // below minimum clear size — omit, never shrink
+      // prefer a dedicated export asset — e.g. a genuinely white-on-
+      // transparent PNG for a wordmark the on-screen deck recolours with
+      // a CSS filter, which a .pptx cannot apply — falling back to the
+      // visible src for any deck that doesn't set one.
+      var src = (logoEl.dataset && logoEl.dataset.exportSrc) || logoEl.currentSrc || logoEl.src;
+      var opts = imageSrcOptions(src);
+      opts.x = 0.8; opts.y = 0.7; opts.w = w; opts.h = h;
       slide.addImage(opts);
     }
 
-    // ── full-bleed photo + graded navy wash, matching the on-screen
-    // .slide-media treatment: a flat wash across the whole slide, plus
-    // a darker band behind the text column. opts: { flatAlpha, bandAlpha,
-    // bandWidthIn }. transparency is PptxGenJS's inverse of CSS alpha. ──
-    function addMediaBackground(pres, slide, brand, s, opts){
-      var imgOpts = imageSrcOptions(s.mediaEl.currentSrc || s.mediaEl.src);
-      imgOpts.x = 0; imgOpts.y = 0; imgOpts.w = 10; imgOpts.h = 5.63;
-      imgOpts.sizing = { type: 'cover', w: 10, h: 5.63 };
-      slide.addImage(imgOpts);
-      slide.addShape(pres.shapes.RECTANGLE, { x: 0, y: 0, w: 10, h: 5.63, fill: { color: brand.navy, transparency: Math.round(100 - opts.flatAlpha * 100) } });
-      slide.addShape(pres.shapes.RECTANGLE, { x: 0, y: 0, w: opts.bandWidthIn, h: 5.63, fill: { color: brand.navy, transparency: Math.round(100 - opts.bandAlpha * 100) } });
+    // ── the one image law: photographs fill their frame by cover (scale
+    // to fill, centre-crop the overflow); logos fit by contain (addLogo,
+    // above). Nothing is ever stretched to a box. Computed centre-crop
+    // instead of a PptxGenJS `sizing` box, which is what was stretching
+    // photos to 16:9 before. ──
+    function addFullBleed(slide, imgEl){
+      if (!imgEl) return;
+      var nw = imgEl.naturalWidth, nh = imgEl.naturalHeight;
+      if (!nw || !nh) return;
+      var SW = 13.333, SH = 7.5;
+      var scale = Math.max(SW / nw, SH / nh);
+      var w = nw * scale, h = nh * scale;
+      var opts = imageSrcOptions(imgEl.currentSrc || imgEl.src);
+      opts.x = (SW - w) / 2; opts.y = (SH - h) / 2; opts.w = w; opts.h = h;
+      slide.addImage(opts);   // overflow past the slide edge is clipped by PowerPoint
     }
 
-    // ── slide builders — one branded layout per DECK slide type ──
+    // ── CSS angle → canvas direction vector. CSS gradient angles are a
+    // compass bearing (0deg = up, 90deg = right, clockwise); canvas needs
+    // an (x,y) unit vector in screen space (x right, y down). ──
+    function cssGradientAngleVector(angleDeg){
+      var rad = angleDeg * Math.PI / 180;
+      return { dx: Math.sin(rad), dy: -Math.cos(rad) };
+    }
+
+    // ── reads a computed `linear-gradient(105deg, rgba(...) 0%, ...)`
+    // string (exactly what getComputedStyle hands back for a CSS
+    // gradient) into an angle + ordered colour stops. Depth-tracked comma
+    // split, because the rgba()/rgb() stops themselves contain commas.
+    // Returns null on anything it can't confidently parse, so the caller
+    // always has a safe fallback rather than guessing. ──
+    function parseLinearGradientStr(str){
+      if (!str) return null;
+      var m = /^linear-gradient\(\s*([\-\d.]+)deg\s*,\s*([\s\S]+)\)\s*$/i.exec(str.trim());
+      if (!m) return null;
+      var angleDeg = parseFloat(m[1]);
+      var body = m[2], stops = [], depth = 0, cur = '';
+      for (var i = 0; i < body.length; i++){
+        var ch = body.charAt(i);
+        if (ch === '(') depth++;
+        else if (ch === ')') depth--;
+        if (ch === ',' && depth === 0){ stops.push(cur.trim()); cur = ''; }
+        else cur += ch;
+      }
+      if (cur.trim()) stops.push(cur.trim());
+      var parsed = [];
+      for (var j = 0; j < stops.length; j++){
+        var sm = /^(rgba?\([^)]*\))\s+([\-\d.]+)%$/i.exec(stops[j]);
+        if (!sm) return null;
+        parsed.push({ color: sm[1], pct: parseFloat(sm[2]) / 100 });
+      }
+      if (parsed.length < 2) return null;
+      return { angleDeg: angleDeg, stops: parsed };
+    }
+
+    // ── renders a slide's own .slide-media::after CSS wash as a single
+    // smooth PNG, read live off the pseudo-element's computed style —
+    // angle and every colour stop — so it stays faithful to whatever the
+    // CSS defines and self-updates if that wash is ever retuned. A
+    // PowerPoint shape fill can't reproduce a multi-stop diagonal CSS
+    // gradient; a stacked pair of flat rectangles was the old
+    // approximation and is exactly what produced the hard-edged seam
+    // this replaces. Returns a data: URI, or null if the pseudo-element's
+    // gradient can't be read (e.g. no ::after wash defined). ──
+    function buildGradientOverlayDataUrl(mediaEl){
+      var container = mediaEl && mediaEl.closest ? mediaEl.closest('.slide-media') : null;
+      if (!container) return null;
+      var cs;
+      try { cs = getComputedStyle(container, '::after'); } catch (e) { return null; }
+      var grad = parseLinearGradientStr(cs && cs.backgroundImage);
+      if (!grad) return null;
+
+      var W = 1600, H = 900; // 16:9, ample resolution for a full-bleed slide fill
+      var canvas = document.createElement('canvas');
+      canvas.width = W; canvas.height = H;
+      var ctx = canvas.getContext('2d');
+      if (!ctx) return null;
+
+      var vec = cssGradientAngleVector(grad.angleDeg);
+      var length = Math.abs(W * vec.dx) + Math.abs(H * vec.dy);
+      var cx = W / 2, cy = H / 2, half = length / 2;
+      var x0 = cx - vec.dx * half, y0 = cy - vec.dy * half;
+      var x1 = cx + vec.dx * half, y1 = cy + vec.dy * half;
+
+      var canvasGrad = ctx.createLinearGradient(x0, y0, x1, y1);
+      grad.stops.forEach(function(stop){
+        canvasGrad.addColorStop(Math.min(1, Math.max(0, stop.pct)), stop.color);
+      });
+      ctx.fillStyle = canvasGrad;
+      ctx.fillRect(0, 0, W, H);
+      return canvas.toDataURL('image/png');
+    }
+
+    // ── full-bleed photo + graded navy wash, matching the on-screen
+    // .slide-media treatment exactly: the photo underneath, unmodified,
+    // then a single smooth gradient PNG (see buildGradientOverlayDataUrl)
+    // full-bleed on top of it — never baked into the photo, so the image
+    // stays distributed verbatim. Falls back to a flat wash only if the
+    // live CSS gradient can't be read, so a slide is never left
+    // unwashed. ──
+    function addMediaBackground(pres, slide, brand, s){
+      addFullBleed(slide, s.mediaEl);
+      var SW = 13.333, SH = 7.5;
+      var overlay = buildGradientOverlayDataUrl(s.mediaEl);
+      if (overlay){
+        slide.addImage({ data: overlay, x: 0, y: 0, w: SW, h: SH });
+      } else {
+        slide.addShape(pres.shapes.RECTANGLE, { x: 0, y: 0, w: SW, h: SH, fill: { color: brand.navy, transparency: 40 } });
+      }
+    }
+
+    // ── slide builders — one branded layout per DECK slide type. Canvas
+    // is PowerPoint's native widescreen, 13.333 x 7.5in; content margins
+    // are x 0.8 / y 0.7 from the edges, 11.73in max text width. ──
     function addTitleSlide(pres, brand, s){
       var slide = pres.addSlide();
       slide.background = { color: brand.navyDeep };
       if (s.mediaEl){
-        addMediaBackground(pres, slide, brand, s, { flatAlpha: .58, bandAlpha: .80, bandWidthIn: 5.6 });
-        if (s.logoSrc) addLogo(slide, s.logoSrc);
+        addMediaBackground(pres, slide, brand, s);
+        if (s.theme === 'dark') addLogo(slide, s.logoEl);
       }
-      slide.addShape(pres.shapes.RECTANGLE, { x: 0.6, y: 1.5, w: 0.4, h: 0.05, fill: { color: brand.turquoise } });
+      slide.addShape(pres.shapes.RECTANGLE, { x: 0.8, y: 2.0, w: 0.55, h: 0.07, fill: { color: brand.turquoise } });
       slide.addText(s.headline || 'Untitled', {
-        x: 0.6, y: 1.68, w: 8.8, h: 1.7, fontFace: brand.serif, fontSize: 40,
+        x: 0.8, y: 2.24, w: 11.73, h: 2.27, fontFace: brand.serif, fontSize: 54,
         color: brand.white, align: 'left', valign: 'top', margin: 0
       });
       if (s.lede){
         slide.addText(s.lede, {
-          x: 0.6, y: 3.4, w: 7.6, h: 0.9, fontFace: brand.sans, fontSize: 15,
+          x: 0.8, y: 4.53, w: 10.13, h: 1.2, fontFace: brand.sans, fontSize: 20,
           color: 'E7E9F5', align: 'left', valign: 'top', margin: 0
         });
       }
@@ -1524,97 +1670,99 @@
 
     function addContentSlide(pres, brand, s){
       var slide = pres.addSlide();
-      slide.background = { color: 'FFFFFF' };
-      var y = 0.5;
+      slide.background = { color: resolveBg(brand, s) };
+      var accent = resolveAccent(brand, s);
+      var y = 0.7;
       if (s.eyebrow){
         slide.addText(s.eyebrow.toUpperCase(), {
-          x: 0.6, y: y, w: 8.8, h: 0.4, fontFace: brand.sans, fontSize: 11,
-          bold: true, color: brand.turquoise, charSpacing: 2, margin: 0
+          x: 0.8, y: y, w: 11.73, h: 0.53, fontFace: brand.sans, fontSize: 15,
+          bold: true, color: accent, charSpacing: 2, margin: 0
         });
-        y += 0.55;
+        y += 0.73;
       }
       slide.addText(s.headline || '', {
-        x: 0.6, y: y, w: 8.8, h: 1.15, fontFace: brand.serif, fontSize: 27,
+        x: 0.8, y: y, w: 11.73, h: 1.53, fontFace: brand.serif, fontSize: 36,
         color: brand.ink, align: 'left', valign: 'top', margin: 0
       });
-      y += 1.25;
+      y += 1.67;
       if (s.support){
         slide.addText(s.support, {
-          x: 0.6, y: y, w: 7.7, h: 1.0, fontFace: brand.sans, fontSize: 13.5,
+          x: 0.8, y: y, w: 10.27, h: 1.33, fontFace: brand.sans, fontSize: 18,
           color: brand.ink, align: 'left', valign: 'top', margin: 0
         });
-        y += 0.95;
+        y += 1.27;
       }
       if (s.proof){
         slide.addShape(pres.shapes.RECTANGLE, {
-          x: 0.6, y: y, w: 0.14, h: 0.14, fill: { color: brand.turquoise }
+          x: 0.8, y: y, w: 0.19, h: 0.19, fill: { color: accent }
         });
         slide.addText(s.proof, {
-          x: 0.86, y: y - 0.1, w: 7.4, h: 0.4, fontFace: brand.sans, fontSize: 12.5,
+          x: 1.15, y: y - 0.13, w: 9.87, h: 0.53, fontFace: brand.sans, fontSize: 17,
           bold: true, color: brand.ink, align: 'left', valign: 'top', margin: 0
         });
-        y += 0.55;
+        y += 0.73;
       }
       if (s.tags && s.tags.length){
         var items = s.tags.map(function(tag, i){
           return { text: tag, options: { bullet: true, breakLine: i < s.tags.length - 1 } };
         });
         slide.addText(items, {
-          x: 0.6, y: y, w: 7.7, h: 1.6, fontFace: brand.sans, fontSize: 13,
-          color: brand.ink, align: 'left', valign: 'top', margin: 0, paraSpaceAfter: 6
+          x: 0.8, y: y, w: 10.27, h: 2.13, fontFace: brand.sans, fontSize: 17,
+          color: brand.ink, align: 'left', valign: 'top', margin: 0, paraSpaceAfter: 8
         });
       }
       if (s.narration) slide.addNotes(s.narration);
       return slide;
     }
 
-    // ── a "content" slide that also carries a photo (a section-divider
-    // moment, not an intro slide) needs the dark-theme text colours the
-    // on-screen deck switches to once .slide-media is present — same
-    // layout as addContentSlide, different palette. ──
+    // ── a dark "content" slide — a section-divider moment (with a
+    // photo) or one of the siblings sharing the same navy chapter (no
+    // photo, a flat themed fill instead) — needs the dark-theme text
+    // palette; same layout as addContentSlide, different colours. ──
     function addDividerSlide(pres, brand, s){
       var slide = pres.addSlide();
-      slide.background = { color: brand.navyDeep };
+      slide.background = { color: resolveBg(brand, s) };
       if (s.mediaEl){
-        addMediaBackground(pres, slide, brand, s, { flatAlpha: .70, bandAlpha: .88, bandWidthIn: 5.6 });
+        addMediaBackground(pres, slide, brand, s);
       }
-      var y = 0.5;
+      var accent = resolveAccent(brand, s);
+      var y = 0.7;
       if (s.eyebrow){
         slide.addText(s.eyebrow.toUpperCase(), {
-          x: 0.6, y: y, w: 8.8, h: 0.4, fontFace: brand.sans, fontSize: 11,
-          bold: true, color: brand.turquoise, charSpacing: 2, margin: 0
+          x: 0.8, y: y, w: 11.73, h: 0.53, fontFace: brand.sans, fontSize: 15,
+          bold: true, color: accent, charSpacing: 2, margin: 0
         });
-        y += 0.55;
+        y += 0.73;
       }
       slide.addText(s.headline || '', {
-        x: 0.6, y: y, w: 8.8, h: 1.15, fontFace: brand.serif, fontSize: 27,
+        x: 0.8, y: y, w: 11.73, h: 1.53, fontFace: brand.serif, fontSize: 36,
         color: brand.white, align: 'left', valign: 'top', margin: 0
       });
-      y += 1.25;
+      y += 1.67;
       if (s.support){
         slide.addText(s.support, {
-          x: 0.6, y: y, w: 7.7, h: 1.0, fontFace: brand.sans, fontSize: 13.5,
+          x: 0.8, y: y, w: 10.27, h: 1.33, fontFace: brand.sans, fontSize: 18,
           color: 'E7E9F5', align: 'left', valign: 'top', margin: 0
         });
-        y += 0.95;
+        y += 1.27;
       }
       if (s.proof){
         slide.addShape(pres.shapes.RECTANGLE, {
-          x: 0.6, y: y, w: 0.14, h: 0.14, fill: { color: brand.turquoise }
+          x: 0.8, y: y, w: 0.19, h: 0.19, fill: { color: accent }
         });
         slide.addText(s.proof, {
-          x: 0.86, y: y - 0.1, w: 7.4, h: 0.4, fontFace: brand.sans, fontSize: 12.5,
+          x: 1.15, y: y - 0.13, w: 9.87, h: 0.53, fontFace: brand.sans, fontSize: 17,
           bold: true, color: brand.white, align: 'left', valign: 'top', margin: 0
         });
-        y += 0.55;
+        y += 0.73;
       }
       if (s.tags && s.tags.length){
         var items = s.tags.map(function(tag, i){
           return { text: tag, options: { bullet: true, breakLine: i < s.tags.length - 1 } };
         });
         slide.addText(items, {
-          x: 0.6, y: y, w: 7.7, h: 1.6, fontFace: brand.sans, fontSize: 13,
-          color: brand.white, align: 'left', valign: 'top', margin: 0, paraSpaceAfter: 6
+          x: 0.8, y: y, w: 10.27, h: 2.13, fontFace: brand.sans, fontSize: 17,
+          color: brand.white, align: 'left', valign: 'top', margin: 0, paraSpaceAfter: 8
         });
       }
       if (s.narration) slide.addNotes(s.narration);
@@ -1623,31 +1771,32 @@
 
     function addStatsSlide(pres, brand, s){
       var slide = pres.addSlide();
-      slide.background = { color: brand.navyDeep };
-      var y = 0.5;
+      slide.background = { color: resolveBg(brand, s) };
+      var accent = resolveAccent(brand, s);
+      var y = 0.7;
       if (s.eyebrow){
         slide.addText(s.eyebrow.toUpperCase(), {
-          x: 0.6, y: y, w: 8.8, h: 0.4, fontFace: brand.sans, fontSize: 11,
-          bold: true, color: brand.turquoise, charSpacing: 2, margin: 0
+          x: 0.8, y: y, w: 11.73, h: 0.53, fontFace: brand.sans, fontSize: 15,
+          bold: true, color: accent, charSpacing: 2, margin: 0
         });
-        y += 0.55;
+        y += 0.73;
       }
       slide.addText(s.headline || '', {
-        x: 0.6, y: y, w: 8.8, h: 1.1, fontFace: brand.serif, fontSize: 26,
+        x: 0.8, y: y, w: 11.73, h: 1.47, fontFace: brand.serif, fontSize: 36,
         color: brand.white, align: 'left', valign: 'top', margin: 0
       });
       var stats = s.stats && s.stats.length ? s.stats : [];
       var n = stats.length || 1;
-      var totalW = 8.8, gap = 0.35;
+      var totalW = 11.73, gap = 0.47;
       var colW = (totalW - gap * (n - 1)) / n;
       stats.forEach(function(stat, i){
-        var x = 0.6 + i * (colW + gap);
+        var x = 0.8 + i * (colW + gap);
         slide.addText(stat.num || '', {
-          x: x, y: 3.05, w: colW, h: 1.0, fontFace: brand.serif, fontSize: 34,
+          x: x, y: 4.07, w: colW, h: 1.33, fontFace: brand.serif, fontSize: 45,
           color: brand.turquoise, align: 'left', valign: 'bottom', margin: 0
         });
         slide.addText((stat.label || '').toUpperCase(), {
-          x: x, y: 4.05, w: colW, h: 0.5, fontFace: brand.sans, fontSize: 10,
+          x: x, y: 5.4, w: colW, h: 0.67, fontFace: brand.sans, fontSize: 13,
           bold: true, color: 'E7E9F5', charSpacing: 1, align: 'left', valign: 'top', margin: 0
         });
       });
@@ -1657,34 +1806,35 @@
 
     function addConvergenceSlide(pres, brand, s){
       var slide = pres.addSlide();
-      slide.background = { color: 'F1F3FA' };
-      var y = 0.55;
+      slide.background = { color: resolveBg(brand, s) };
+      var accent = resolveAccent(brand, s);
+      var y = 0.73;
       if (s.eyebrow){
         slide.addText(s.eyebrow.toUpperCase(), {
-          x: 0.6, y: y, w: 8.8, h: 0.4, fontFace: brand.sans, fontSize: 11,
-          bold: true, color: brand.turquoise, charSpacing: 2, margin: 0
+          x: 0.8, y: y, w: 11.73, h: 0.53, fontFace: brand.sans, fontSize: 15,
+          bold: true, color: accent, charSpacing: 2, margin: 0
         });
-        y += 0.55;
+        y += 0.73;
       }
       slide.addText(s.headline || '', {
-        x: 0.6, y: y, w: 8.8, h: 1.0, fontFace: brand.serif, fontSize: 26,
+        x: 0.8, y: y, w: 11.73, h: 1.33, fontFace: brand.serif, fontSize: 36,
         color: brand.ink, align: 'left', valign: 'top', margin: 0
       });
-      y += 1.15;
+      y += 1.53;
       if (s.chips && s.chips.length){
         var items = s.chips.map(function(chip, i){
           return { text: chip, options: { bullet: true, breakLine: i < s.chips.length - 1 } };
         });
-        var chipsBoxH = Math.min(2.4, 0.42 * s.chips.length + 0.2);
+        var chipsBoxH = Math.min(3.2, 0.56 * s.chips.length + 0.27);
         slide.addText(items, {
-          x: 0.6, y: y, w: 7.8, h: chipsBoxH, fontFace: brand.sans, fontSize: 13.5,
-          bold: true, color: brand.ink, align: 'left', valign: 'top', margin: 0, paraSpaceAfter: 8
+          x: 0.8, y: y, w: 10.4, h: chipsBoxH, fontFace: brand.sans, fontSize: 17,
+          bold: true, color: brand.ink, align: 'left', valign: 'top', margin: 0, paraSpaceAfter: 11
         });
-        y += chipsBoxH + 0.25;
+        y += chipsBoxH + 0.33;
       }
       if (s.label){
         slide.addText(s.label, {
-          x: 0.6, y: Math.min(y, 4.9), w: 8.4, h: 0.4, fontFace: brand.sans, fontSize: 11,
+          x: 0.8, y: Math.min(y, 6.53), w: 11.2, h: 0.53, fontFace: brand.sans, fontSize: 15,
           bold: true, color: brand.blue, charSpacing: 1.5, align: 'left', valign: 'top', margin: 0
         });
       }
@@ -1696,31 +1846,31 @@
       var slide = pres.addSlide();
       slide.background = { color: brand.navyDeep };
       if (s.mediaEl){
-        addMediaBackground(pres, slide, brand, s, { flatAlpha: .64, bandAlpha: .84, bandWidthIn: 5.6 });
-        if (s.logoSrc) addLogo(slide, s.logoSrc);
+        addMediaBackground(pres, slide, brand, s);
+        if (s.theme === 'dark') addLogo(slide, s.logoEl);
       }
-      slide.addShape(pres.shapes.RECTANGLE, { x: 0.6, y: 1.5, w: 0.4, h: 0.05, fill: { color: brand.turquoise } });
+      slide.addShape(pres.shapes.RECTANGLE, { x: 0.8, y: 2.0, w: 0.55, h: 0.07, fill: { color: brand.turquoise } });
       slide.addText(s.headline || 'Untitled', {
-        x: 0.6, y: 1.68, w: 8.8, h: 1.4, fontFace: brand.serif, fontSize: 36,
+        x: 0.8, y: 2.24, w: 11.73, h: 1.87, fontFace: brand.serif, fontSize: 48,
         color: brand.white, align: 'left', valign: 'top', margin: 0
       });
-      var y = 3.15;
+      var y = 4.2;
       if (s.lede){
         slide.addText(s.lede, {
-          x: 0.6, y: y, w: 7.6, h: 0.6, fontFace: brand.sans, fontSize: 15,
+          x: 0.8, y: y, w: 10.13, h: 0.8, fontFace: brand.sans, fontSize: 20,
           color: 'E7E9F5', align: 'left', valign: 'top', margin: 0
         });
-        y += 0.65;
+        y += 0.87;
       }
       if (s.ctaLabel){
         slide.addText(s.ctaLabel, {
-          x: 0.6, y: y, w: 7.6, h: 0.5, fontFace: brand.sans, fontSize: 14,
+          x: 0.8, y: y, w: 10.13, h: 0.67, fontFace: brand.sans, fontSize: 19,
           bold: true, color: brand.turquoise, align: 'left', valign: 'top', margin: 0
         });
       }
       if (s.creditText){
         slide.addText(s.creditText, {
-          x: 6.7, y: 5.28, w: 3.0, h: 0.28, fontFace: brand.sans, fontSize: 7.5,
+          x: 9.23, y: 6.85, w: 3.7, h: 0.3, fontFace: brand.sans, fontSize: 10,
           color: 'C7CBE8', align: 'right', valign: 'bottom', margin: 0
         });
       }
@@ -1730,7 +1880,7 @@
 
     var BUILDERS = {
       title: addTitleSlide,
-      content: function(pres, brand, s){ return (s.mediaEl ? addDividerSlide : addContentSlide)(pres, brand, s); },
+      content: function(pres, brand, s){ return (s.theme === 'dark' ? addDividerSlide : addContentSlide)(pres, brand, s); },
       stats: addStatsSlide,
       convergence: addConvergenceSlide,
       close: addCloseSlide
@@ -1738,7 +1888,8 @@
 
     function buildPresentation(){
       var pres = new window.PptxGenJS();
-      pres.layout = 'LAYOUT_16x9';
+      pres.defineLayout({ name: 'WIDE', width: 13.333, height: 7.5 });
+      pres.layout = 'WIDE';
       pres.title = document.title || 'Presentation';
       var brand = readBrand();
       slides.forEach(function(section){
